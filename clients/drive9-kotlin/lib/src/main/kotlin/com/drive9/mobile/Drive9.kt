@@ -76,7 +76,45 @@ public class Drive9Client(baseUrl: String, apiKey: String) {
     public suspend fun sql(query: String): List<String> = withContext(Dispatchers.IO) {
         inner.sql(query)
     }
+
+    /**
+     * Stream a remote file to a local path. Progress is precise (bytes
+     * transferred equal bytes already on disk). Cancellation is cooperative
+     * via [Drive9CancelToken]; on cancel or any failure the partial local
+     * file is deleted.
+     *
+     * Caller must hold a reference to [progress] and [token] for the
+     * lifetime of this call; the bindings keep raw references across FFI.
+     */
+    public suspend fun downloadFile(
+        remotePath: String,
+        localPath: String,
+        progress: Drive9ProgressListener? = null,
+        token: Drive9CancelToken? = null,
+    ): Unit = withContext(Dispatchers.IO) {
+        inner.downloadFile(remotePath, localPath, progress, token)
+    }
+
+    /**
+     * Patch specific parts of a remote file using bytes read from
+     * [localPath]. [dirtyParts] are 1-based part numbers known to the caller
+     * (e.g. from a local diff). The wrapper does not support cancel /
+     * progress for patch in this iteration; see Phase 2B-2.
+     */
+    public suspend fun patchFileParts(
+        localPath: String,
+        remotePath: String,
+        dirtyParts: List<Int>,
+        newSize: Long,
+        partSize: Long? = null,
+        expectedRevision: Long? = null,
+    ): Unit = withContext(Dispatchers.IO) {
+        inner.patchFileParts(localPath, remotePath, dirtyParts, newSize, partSize, expectedRevision)
+    }
 }
+
+public typealias Drive9CancelToken = uniffi.drive9_mobile_core.Drive9CancelToken
+public typealias Drive9ProgressListener = uniffi.drive9_mobile_core.Drive9ProgressListener
 
 public data class Drive9FileInfo(
     val name: String,

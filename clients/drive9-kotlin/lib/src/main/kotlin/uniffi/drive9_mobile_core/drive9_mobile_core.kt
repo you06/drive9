@@ -613,6 +613,28 @@ internal open class UniffiForeignFutureResultVoid(
 internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
     fun callback(`callbackData`: Long,`result`: UniffiForeignFutureResultVoid.UniffiByValue,)
 }
+internal interface UniffiCallbackInterfaceDrive9ProgressListenerMethod0 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`transferred`: Long,`total`: Long,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+@Structure.FieldOrder("uniffiFree", "uniffiClone", "onProgress")
+internal open class UniffiVTableCallbackInterfaceDrive9ProgressListener(
+    @JvmField internal var `uniffiFree`: UniffiCallbackInterfaceFree? = null,
+    @JvmField internal var `uniffiClone`: UniffiCallbackInterfaceClone? = null,
+    @JvmField internal var `onProgress`: UniffiCallbackInterfaceDrive9ProgressListenerMethod0? = null,
+) : Structure() {
+    class UniffiByValue(
+        `uniffiFree`: UniffiCallbackInterfaceFree? = null,
+        `uniffiClone`: UniffiCallbackInterfaceClone? = null,
+        `onProgress`: UniffiCallbackInterfaceDrive9ProgressListenerMethod0? = null,
+    ): UniffiVTableCallbackInterfaceDrive9ProgressListener(`uniffiFree`,`uniffiClone`,`onProgress`,), Structure.ByValue
+
+   internal fun uniffiSetValue(other: UniffiVTableCallbackInterfaceDrive9ProgressListener) {
+        `uniffiFree` = other.`uniffiFree`
+        `uniffiClone` = other.`uniffiClone`
+        `onProgress` = other.`onProgress`
+    }
+
+}
 
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
@@ -636,9 +658,15 @@ internal object IntegrityCheckingUniffiLib {
         uniffiCheckContractApiVersion(this)
         uniffiCheckApiChecksums(this)
     }
+    external fun uniffi_drive9_mobile_core_checksum_method_drive9canceltoken_cancel(
+    ): Short
+    external fun uniffi_drive9_mobile_core_checksum_method_drive9canceltoken_is_cancelled(
+    ): Short
     external fun uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_copy(
     ): Short
     external fun uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_delete(
+    ): Short
+    external fun uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_download_file(
     ): Short
     external fun uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_find(
     ): Short
@@ -647,6 +675,8 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_list(
     ): Short
     external fun uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_mkdir(
+    ): Short
+    external fun uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_patch_file_parts(
     ): Short
     external fun uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_read(
     ): Short
@@ -657,6 +687,10 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_stat(
     ): Short
     external fun uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_write(
+    ): Short
+    external fun uniffi_drive9_mobile_core_checksum_method_drive9progresslistener_on_progress(
+    ): Short
+    external fun uniffi_drive9_mobile_core_checksum_constructor_drive9canceltoken_new(
     ): Short
     external fun uniffi_drive9_mobile_core_checksum_constructor_drive9mobileclient_new(
     ): Short
@@ -676,142 +710,165 @@ internal object UniffiLib {
 
     init {
         Native.register(UniffiLib::class.java, findLibraryName(componentName = "drive9_mobile_core"))
+        uniffiCallbackInterfaceDrive9ProgressListener.register(this)
         
     }
-    external fun uniffi_drive9_mobile_core_fn_clone_drive9mobileclient(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): Long
-    external fun uniffi_drive9_mobile_core_fn_free_drive9mobileclient(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): Unit
-    external fun uniffi_drive9_mobile_core_fn_constructor_drive9mobileclient_new(`baseUrl`: RustBuffer.ByValue,`apiKey`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): Long
-    external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_copy(`ptr`: Long,`srcPath`: RustBuffer.ByValue,`dstPath`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): Unit
-    external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_delete(`ptr`: Long,`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): Unit
-    external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_find(`ptr`: Long,`pathPrefix`: RustBuffer.ByValue,`params`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_grep(`ptr`: Long,`query`: RustBuffer.ByValue,`pathPrefix`: RustBuffer.ByValue,`limit`: Int,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_list(`ptr`: Long,`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_mkdir(`ptr`: Long,`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): Unit
-    external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_read(`ptr`: Long,`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_rename(`ptr`: Long,`oldPath`: RustBuffer.ByValue,`newPath`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): Unit
-    external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_sql(`ptr`: Long,`query`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_stat(`ptr`: Long,`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_write(`ptr`: Long,`path`: RustBuffer.ByValue,`data`: RustBuffer.ByValue,`expectedRevision`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): Unit
-    external fun ffi_drive9_mobile_core_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun ffi_drive9_mobile_core_rustbuffer_from_bytes(`bytes`: ForeignBytes.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun ffi_drive9_mobile_core_rustbuffer_free(`buf`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): Unit
-    external fun ffi_drive9_mobile_core_rustbuffer_reserve(`buf`: RustBuffer.ByValue,`additional`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun ffi_drive9_mobile_core_rust_future_poll_u8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_drive9_mobile_core_rust_future_cancel_u8(`handle`: Long,
-    ): Unit
-    external fun ffi_drive9_mobile_core_rust_future_free_u8(`handle`: Long,
-    ): Unit
-    external fun ffi_drive9_mobile_core_rust_future_complete_u8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): Byte
-    external fun ffi_drive9_mobile_core_rust_future_poll_i8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_drive9_mobile_core_rust_future_cancel_i8(`handle`: Long,
-    ): Unit
-    external fun ffi_drive9_mobile_core_rust_future_free_i8(`handle`: Long,
-    ): Unit
-    external fun ffi_drive9_mobile_core_rust_future_complete_i8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): Byte
-    external fun ffi_drive9_mobile_core_rust_future_poll_u16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_drive9_mobile_core_rust_future_cancel_u16(`handle`: Long,
-    ): Unit
-    external fun ffi_drive9_mobile_core_rust_future_free_u16(`handle`: Long,
-    ): Unit
-    external fun ffi_drive9_mobile_core_rust_future_complete_u16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): Short
-    external fun ffi_drive9_mobile_core_rust_future_poll_i16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_drive9_mobile_core_rust_future_cancel_i16(`handle`: Long,
-    ): Unit
-    external fun ffi_drive9_mobile_core_rust_future_free_i16(`handle`: Long,
-    ): Unit
-    external fun ffi_drive9_mobile_core_rust_future_complete_i16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): Short
-    external fun ffi_drive9_mobile_core_rust_future_poll_u32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_drive9_mobile_core_rust_future_cancel_u32(`handle`: Long,
-    ): Unit
-    external fun ffi_drive9_mobile_core_rust_future_free_u32(`handle`: Long,
-    ): Unit
-    external fun ffi_drive9_mobile_core_rust_future_complete_u32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): Int
-    external fun ffi_drive9_mobile_core_rust_future_poll_i32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_drive9_mobile_core_rust_future_cancel_i32(`handle`: Long,
-    ): Unit
-    external fun ffi_drive9_mobile_core_rust_future_free_i32(`handle`: Long,
-    ): Unit
-    external fun ffi_drive9_mobile_core_rust_future_complete_i32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): Int
-    external fun ffi_drive9_mobile_core_rust_future_poll_u64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_drive9_mobile_core_rust_future_cancel_u64(`handle`: Long,
-    ): Unit
-    external fun ffi_drive9_mobile_core_rust_future_free_u64(`handle`: Long,
-    ): Unit
-    external fun ffi_drive9_mobile_core_rust_future_complete_u64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): Long
-    external fun ffi_drive9_mobile_core_rust_future_poll_i64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_drive9_mobile_core_rust_future_cancel_i64(`handle`: Long,
-    ): Unit
-    external fun ffi_drive9_mobile_core_rust_future_free_i64(`handle`: Long,
-    ): Unit
-    external fun ffi_drive9_mobile_core_rust_future_complete_i64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): Long
-    external fun ffi_drive9_mobile_core_rust_future_poll_f32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_drive9_mobile_core_rust_future_cancel_f32(`handle`: Long,
-    ): Unit
-    external fun ffi_drive9_mobile_core_rust_future_free_f32(`handle`: Long,
-    ): Unit
-    external fun ffi_drive9_mobile_core_rust_future_complete_f32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): Float
-    external fun ffi_drive9_mobile_core_rust_future_poll_f64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_drive9_mobile_core_rust_future_cancel_f64(`handle`: Long,
-    ): Unit
-    external fun ffi_drive9_mobile_core_rust_future_free_f64(`handle`: Long,
-    ): Unit
-    external fun ffi_drive9_mobile_core_rust_future_complete_f64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): Double
-    external fun ffi_drive9_mobile_core_rust_future_poll_rust_buffer(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_drive9_mobile_core_rust_future_cancel_rust_buffer(`handle`: Long,
-    ): Unit
-    external fun ffi_drive9_mobile_core_rust_future_free_rust_buffer(`handle`: Long,
-    ): Unit
-    external fun ffi_drive9_mobile_core_rust_future_complete_rust_buffer(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun ffi_drive9_mobile_core_rust_future_poll_void(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_drive9_mobile_core_rust_future_cancel_void(`handle`: Long,
-    ): Unit
-    external fun ffi_drive9_mobile_core_rust_future_free_void(`handle`: Long,
-    ): Unit
-    external fun ffi_drive9_mobile_core_rust_future_complete_void(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): Unit
+    external fun uniffi_drive9_mobile_core_fn_clone_drive9canceltoken(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Long
+external fun uniffi_drive9_mobile_core_fn_free_drive9canceltoken(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+external fun uniffi_drive9_mobile_core_fn_constructor_drive9canceltoken_new(uniffi_out_err: UniffiRustCallStatus, 
+): Long
+external fun uniffi_drive9_mobile_core_fn_method_drive9canceltoken_cancel(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+external fun uniffi_drive9_mobile_core_fn_method_drive9canceltoken_is_cancelled(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Byte
+external fun uniffi_drive9_mobile_core_fn_clone_drive9mobileclient(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Long
+external fun uniffi_drive9_mobile_core_fn_free_drive9mobileclient(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+external fun uniffi_drive9_mobile_core_fn_constructor_drive9mobileclient_new(`baseUrl`: RustBuffer.ByValue,`apiKey`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Long
+external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_copy(`ptr`: Long,`srcPath`: RustBuffer.ByValue,`dstPath`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_delete(`ptr`: Long,`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_download_file(`ptr`: Long,`remotePath`: RustBuffer.ByValue,`localPath`: RustBuffer.ByValue,`progress`: RustBuffer.ByValue,`cancel`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_find(`ptr`: Long,`pathPrefix`: RustBuffer.ByValue,`params`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_grep(`ptr`: Long,`query`: RustBuffer.ByValue,`pathPrefix`: RustBuffer.ByValue,`limit`: Int,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_list(`ptr`: Long,`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_mkdir(`ptr`: Long,`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_patch_file_parts(`ptr`: Long,`localPath`: RustBuffer.ByValue,`remotePath`: RustBuffer.ByValue,`dirtyParts`: RustBuffer.ByValue,`newSize`: Long,`partSize`: RustBuffer.ByValue,`expectedRevision`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_read(`ptr`: Long,`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_rename(`ptr`: Long,`oldPath`: RustBuffer.ByValue,`newPath`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_sql(`ptr`: Long,`query`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_stat(`ptr`: Long,`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_write(`ptr`: Long,`path`: RustBuffer.ByValue,`data`: RustBuffer.ByValue,`expectedRevision`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+external fun uniffi_drive9_mobile_core_fn_clone_drive9progresslistener(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Long
+external fun uniffi_drive9_mobile_core_fn_free_drive9progresslistener(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+external fun uniffi_drive9_mobile_core_fn_init_callback_vtable_drive9progresslistener(`vtable`: UniffiVTableCallbackInterfaceDrive9ProgressListener,
+): Unit
+external fun uniffi_drive9_mobile_core_fn_method_drive9progresslistener_on_progress(`ptr`: Long,`transferred`: Long,`total`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+external fun ffi_drive9_mobile_core_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun ffi_drive9_mobile_core_rustbuffer_from_bytes(`bytes`: ForeignBytes.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun ffi_drive9_mobile_core_rustbuffer_free(`buf`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+external fun ffi_drive9_mobile_core_rustbuffer_reserve(`buf`: RustBuffer.ByValue,`additional`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun ffi_drive9_mobile_core_rust_future_poll_u8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_drive9_mobile_core_rust_future_cancel_u8(`handle`: Long,
+): Unit
+external fun ffi_drive9_mobile_core_rust_future_free_u8(`handle`: Long,
+): Unit
+external fun ffi_drive9_mobile_core_rust_future_complete_u8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Byte
+external fun ffi_drive9_mobile_core_rust_future_poll_i8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_drive9_mobile_core_rust_future_cancel_i8(`handle`: Long,
+): Unit
+external fun ffi_drive9_mobile_core_rust_future_free_i8(`handle`: Long,
+): Unit
+external fun ffi_drive9_mobile_core_rust_future_complete_i8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Byte
+external fun ffi_drive9_mobile_core_rust_future_poll_u16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_drive9_mobile_core_rust_future_cancel_u16(`handle`: Long,
+): Unit
+external fun ffi_drive9_mobile_core_rust_future_free_u16(`handle`: Long,
+): Unit
+external fun ffi_drive9_mobile_core_rust_future_complete_u16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Short
+external fun ffi_drive9_mobile_core_rust_future_poll_i16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_drive9_mobile_core_rust_future_cancel_i16(`handle`: Long,
+): Unit
+external fun ffi_drive9_mobile_core_rust_future_free_i16(`handle`: Long,
+): Unit
+external fun ffi_drive9_mobile_core_rust_future_complete_i16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Short
+external fun ffi_drive9_mobile_core_rust_future_poll_u32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_drive9_mobile_core_rust_future_cancel_u32(`handle`: Long,
+): Unit
+external fun ffi_drive9_mobile_core_rust_future_free_u32(`handle`: Long,
+): Unit
+external fun ffi_drive9_mobile_core_rust_future_complete_u32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Int
+external fun ffi_drive9_mobile_core_rust_future_poll_i32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_drive9_mobile_core_rust_future_cancel_i32(`handle`: Long,
+): Unit
+external fun ffi_drive9_mobile_core_rust_future_free_i32(`handle`: Long,
+): Unit
+external fun ffi_drive9_mobile_core_rust_future_complete_i32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Int
+external fun ffi_drive9_mobile_core_rust_future_poll_u64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_drive9_mobile_core_rust_future_cancel_u64(`handle`: Long,
+): Unit
+external fun ffi_drive9_mobile_core_rust_future_free_u64(`handle`: Long,
+): Unit
+external fun ffi_drive9_mobile_core_rust_future_complete_u64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Long
+external fun ffi_drive9_mobile_core_rust_future_poll_i64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_drive9_mobile_core_rust_future_cancel_i64(`handle`: Long,
+): Unit
+external fun ffi_drive9_mobile_core_rust_future_free_i64(`handle`: Long,
+): Unit
+external fun ffi_drive9_mobile_core_rust_future_complete_i64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Long
+external fun ffi_drive9_mobile_core_rust_future_poll_f32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_drive9_mobile_core_rust_future_cancel_f32(`handle`: Long,
+): Unit
+external fun ffi_drive9_mobile_core_rust_future_free_f32(`handle`: Long,
+): Unit
+external fun ffi_drive9_mobile_core_rust_future_complete_f32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Float
+external fun ffi_drive9_mobile_core_rust_future_poll_f64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_drive9_mobile_core_rust_future_cancel_f64(`handle`: Long,
+): Unit
+external fun ffi_drive9_mobile_core_rust_future_free_f64(`handle`: Long,
+): Unit
+external fun ffi_drive9_mobile_core_rust_future_complete_f64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Double
+external fun ffi_drive9_mobile_core_rust_future_poll_rust_buffer(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_drive9_mobile_core_rust_future_cancel_rust_buffer(`handle`: Long,
+): Unit
+external fun ffi_drive9_mobile_core_rust_future_free_rust_buffer(`handle`: Long,
+): Unit
+external fun ffi_drive9_mobile_core_rust_future_complete_rust_buffer(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun ffi_drive9_mobile_core_rust_future_poll_void(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_drive9_mobile_core_rust_future_cancel_void(`handle`: Long,
+): Unit
+external fun ffi_drive9_mobile_core_rust_future_free_void(`handle`: Long,
+): Unit
+external fun ffi_drive9_mobile_core_rust_future_complete_void(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
 
-        
+    
 }
 
 private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
@@ -825,10 +882,19 @@ private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
 }
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
+    if (lib.uniffi_drive9_mobile_core_checksum_method_drive9canceltoken_cancel() != 18135.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_drive9_mobile_core_checksum_method_drive9canceltoken_is_cancelled() != 14246.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_copy() != 4600.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_delete() != 51992.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_download_file() != 2993.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_find() != 51697.toShort()) {
@@ -841,6 +907,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_mkdir() != 42794.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_patch_file_parts() != 19558.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_read() != 41349.toShort()) {
@@ -856,6 +925,12 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_write() != 10803.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_drive9_mobile_core_checksum_method_drive9progresslistener_on_progress() != 21944.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_drive9_mobile_core_checksum_constructor_drive9canceltoken_new() != 6612.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_drive9_mobile_core_checksum_constructor_drive9mobileclient_new() != 15619.toShort()) {
@@ -952,7 +1027,38 @@ object UniffiWithHandle
  *
  * @suppress
  * */
-object NoHandle
+object NoHandle// Magic number for the Rust proxy to call using the same mechanism as every other method,
+// to free the callback once it's dropped by Rust.
+internal const val IDX_CALLBACK_FREE = 0
+// Callback return codes
+internal const val UNIFFI_CALLBACK_SUCCESS = 0
+internal const val UNIFFI_CALLBACK_ERROR = 1
+internal const val UNIFFI_CALLBACK_UNEXPECTED_ERROR = 2
+
+/**
+ * @suppress
+ */
+public abstract class FfiConverterCallbackInterface<CallbackInterface: Any>: FfiConverter<CallbackInterface, Long> {
+    internal val handleMap = UniffiHandleMap<CallbackInterface>()
+
+    internal fun drop(handle: Long) {
+        handleMap.remove(handle)
+    }
+
+    override fun lift(value: Long): CallbackInterface {
+        return handleMap.get(value)
+    }
+
+    override fun read(buf: ByteBuffer) = lift(buf.getLong())
+
+    override fun lower(value: CallbackInterface) = handleMap.insert(value)
+
+    override fun allocationSize(value: CallbackInterface) = 8UL
+
+    override fun write(value: CallbackInterface, buf: ByteBuffer) {
+        buf.putLong(lower(value))
+    }
+}
 /**
  * The cleaner interface for Object finalization code to run.
  * This is the entry point to any implementation that we're using.
@@ -1038,6 +1144,29 @@ public object FfiConverterInt: FfiConverter<Int, Int> {
 
     override fun write(value: Int, buf: ByteBuffer) {
         buf.putInt(value)
+    }
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterULong: FfiConverter<ULong, Long> {
+    override fun lift(value: Long): ULong {
+        return value.toULong()
+    }
+
+    override fun read(buf: ByteBuffer): ULong {
+        return lift(buf.getLong())
+    }
+
+    override fun lower(value: ULong): Long {
+        return value.toLong()
+    }
+
+    override fun allocationSize(value: ULong) = 8UL
+
+    override fun write(value: ULong, buf: ByteBuffer) {
+        buf.putLong(value.toLong())
     }
 }
 
@@ -1282,11 +1411,322 @@ public object FfiConverterByteArray: FfiConverterRustBuffer<ByteArray> {
 //
 
 
+/**
+ * Cooperative cancellation handle. Construct one on the caller side, pass it
+ * into `upload_file` / `download_file` / `patch_file_parts`, and call
+ * `cancel()` from another task / thread to abort the transfer.
+ *
+ * Cancellation is cooperative: in-flight HTTP requests are dropped when the
+ * transfer future is racing against `cancel()`, which terminates the
+ * underlying connection. Partial uploads on the server are NOT explicitly
+ * aborted (drive9-rs handles its own cleanup on internal errors, but a
+ * drop-on-cancel from outside cannot reach those abort paths). Server-side
+ * upload sessions typically expire.
+ */
+public interface Drive9CancelTokenInterface {
+    
+    fun `cancel`()
+    
+    fun `isCancelled`(): kotlin.Boolean
+    
+    companion object
+}
+
+/**
+ * Cooperative cancellation handle. Construct one on the caller side, pass it
+ * into `upload_file` / `download_file` / `patch_file_parts`, and call
+ * `cancel()` from another task / thread to abort the transfer.
+ *
+ * Cancellation is cooperative: in-flight HTTP requests are dropped when the
+ * transfer future is racing against `cancel()`, which terminates the
+ * underlying connection. Partial uploads on the server are NOT explicitly
+ * aborted (drive9-rs handles its own cleanup on internal errors, but a
+ * drop-on-cancel from outside cannot reach those abort paths). Server-side
+ * upload sessions typically expire.
+ */
+open class Drive9CancelToken: Disposable, AutoCloseable, Drive9CancelTokenInterface
+{
+
+    @Suppress("UNUSED_PARAMETER")
+    /**
+     * @suppress
+     */
+    constructor(withHandle: UniffiWithHandle, handle: Long) {
+        this.handle = handle
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(handle))
+    }
+
+    /**
+     * @suppress
+     *
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    constructor(noHandle: NoHandle) {
+        this.handle = 0
+        this.cleanable = null
+    }
+    constructor() :
+        this(UniffiWithHandle, 
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_drive9_mobile_core_fn_constructor_drive9canceltoken_new(
+    
+        _status)
+}
+    )
+
+    protected val handle: Long
+    protected val cleanable: UniffiCleaner.Cleanable?
+
+    private val wasDestroyed = AtomicBoolean(false)
+    private val callCounter = AtomicLong(1)
+
+    override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    @Synchronized
+    override fun close() {
+        this.destroy()
+    }
+
+    internal inline fun <R> callWithHandle(block: (handle: Long) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.get()
+            if (c == 0L) {
+                throw IllegalStateException("${this.javaClass.simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this.javaClass.simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the handle being freed concurrently.
+        try {
+            return block(this.uniffiCloneHandle())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiCleanAction(private val handle: Long) : Runnable {
+        override fun run() {
+            if (handle == 0.toLong()) {
+                // Fake object created with `NoHandle`, don't try to free.
+                return;
+            }
+            uniffiRustCall { status ->
+                UniffiLib.uniffi_drive9_mobile_core_fn_free_drive9canceltoken(handle, status)
+            }
+        }
+    }
+
+    /**
+     * @suppress
+     */
+    fun uniffiCloneHandle(): Long {
+        if (handle == 0.toLong()) {
+            throw InternalException("uniffiCloneHandle() called on NoHandle object");
+        }
+        return uniffiRustCall() { status ->
+            UniffiLib.uniffi_drive9_mobile_core_fn_clone_drive9canceltoken(handle, status)
+        }
+    }
+
+    override fun `cancel`()
+        = 
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_drive9_mobile_core_fn_method_drive9canceltoken_cancel(
+        it,
+        _status)
+}
+    }
+    
+    
+
+    override fun `isCancelled`(): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_drive9_mobile_core_fn_method_drive9canceltoken_is_cancelled(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
+
+    
+
+
+    
+    
+    /**
+     * @suppress
+     */
+    companion object
+    
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeDrive9CancelToken: FfiConverter<Drive9CancelToken, Long> {
+    override fun lower(value: Drive9CancelToken): Long {
+        return value.uniffiCloneHandle()
+    }
+
+    override fun lift(value: Long): Drive9CancelToken {
+        return Drive9CancelToken(UniffiWithHandle, value)
+    }
+
+    override fun read(buf: ByteBuffer): Drive9CancelToken {
+        return lift(buf.getLong())
+    }
+
+    override fun allocationSize(value: Drive9CancelToken) = 8UL
+
+    override fun write(value: Drive9CancelToken, buf: ByteBuffer) {
+        buf.putLong(lower(value))
+    }
+}
+
+
+// This template implements a class for working with a Rust struct via a handle
+// to the live Rust struct on the other side of the FFI.
+//
+// There's some subtlety here, because we have to be careful not to operate on a Rust
+// struct after it has been dropped, and because we must expose a public API for freeing
+// theq Kotlin wrapper object in lieu of reliable finalizers. The core requirements are:
+//
+//   * Each instance holds an opaque handle to the underlying Rust struct.
+//     Method calls need to read this handle from the object's state and pass it in to
+//     the Rust FFI.
+//
+//   * When an instance is no longer needed, its handle should be passed to a
+//     special destructor function provided by the Rust FFI, which will drop the
+//     underlying Rust struct.
+//
+//   * Given an instance, calling code is expected to call the special
+//     `destroy` method in order to free it after use, either by calling it explicitly
+//     or by using a higher-level helper like the `use` method. Failing to do so risks
+//     leaking the underlying Rust struct.
+//
+//   * We can't assume that calling code will do the right thing, and must be prepared
+//     to handle Kotlin method calls executing concurrently with or even after a call to
+//     `destroy`, and to handle multiple (possibly concurrent!) calls to `destroy`.
+//
+//   * We must never allow Rust code to operate on the underlying Rust struct after
+//     the destructor has been called, and must never call the destructor more than once.
+//     Doing so may trigger memory unsafety.
+//
+//   * To mitigate many of the risks of leaking memory and use-after-free unsafety, a `Cleaner`
+//     is implemented to call the destructor when the Kotlin object becomes unreachable.
+//     This is done in a background thread. This is not a panacea, and client code should be aware that
+//      1. the thread may starve if some there are objects that have poorly performing
+//     `drop` methods or do significant work in their `drop` methods.
+//      2. the thread is shared across the whole library. This can be tuned by using `android_cleaner = true`,
+//         or `android = true` in the [`kotlin` section of the `uniffi.toml` file](https://mozilla.github.io/uniffi-rs/kotlin/configuration.html).
+//
+// If we try to implement this with mutual exclusion on access to the handle, there is the
+// possibility of a race between a method call and a concurrent call to `destroy`:
+//
+//    * Thread A starts a method call, reads the value of the handle, but is interrupted
+//      before it can pass the handle over the FFI to Rust.
+//    * Thread B calls `destroy` and frees the underlying Rust struct.
+//    * Thread A resumes, passing the already-read handle value to Rust and triggering
+//      a use-after-free.
+//
+// One possible solution would be to use a `ReadWriteLock`, with each method call taking
+// a read lock (and thus allowed to run concurrently) and the special `destroy` method
+// taking a write lock (and thus blocking on live method calls). However, we aim not to
+// generate methods with any hidden blocking semantics, and a `destroy` method that might
+// block if called incorrectly seems to meet that bar.
+//
+// So, we achieve our goals by giving each instance an associated `AtomicLong` counter to track
+// the number of in-flight method calls, and an `AtomicBoolean` flag to indicate whether `destroy`
+// has been called. These are updated according to the following rules:
+//
+//    * The initial value of the counter is 1, indicating a live object with no in-flight calls.
+//      The initial value for the flag is false.
+//
+//    * At the start of each method call, we atomically check the counter.
+//      If it is 0 then the underlying Rust struct has already been destroyed and the call is aborted.
+//      If it is nonzero them we atomically increment it by 1 and proceed with the method call.
+//
+//    * At the end of each method call, we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+//    * When `destroy` is called, we atomically flip the flag from false to true.
+//      If the flag was already true we silently fail.
+//      Otherwise we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+// Astute readers may observe that this all sounds very similar to the way that Rust's `Arc<T>` works,
+// and indeed it is, with the addition of a flag to guard against multiple calls to `destroy`.
+//
+// The overall effect is that the underlying Rust struct is destroyed only when `destroy` has been
+// called *and* all in-flight method calls have completed, avoiding violating any of the expectations
+// of the underlying Rust code.
+//
+// This makes a cleaner a better alternative to _not_ calling `destroy()` as
+// and when the object is finished with, but the abstraction is not perfect: if the Rust object's `drop`
+// method is slow, and/or there are many objects to cleanup, and it's on a low end Android device, then the cleaner
+// thread may be starved, and the app will leak memory.
+//
+// In this case, `destroy`ing manually may be a better solution.
+//
+// The cleaner can live side by side with the manual calling of `destroy`. In the order of responsiveness, uniffi objects
+// with Rust peers are reclaimed:
+//
+// 1. By calling the `destroy` method of the object, which calls `rustObject.free()`. If that doesn't happen:
+// 2. When the object becomes unreachable, AND the Cleaner thread gets to call `rustObject.free()`. If the thread is starved then:
+// 3. The memory is reclaimed when the process terminates.
+//
+// [1] https://stackoverflow.com/questions/24376768/can-java-finalize-an-object-when-it-is-still-in-scope/24380219
+//
+
+
 public interface Drive9MobileClientInterface {
     
     fun `copy`(`srcPath`: kotlin.String, `dstPath`: kotlin.String)
     
     fun `delete`(`path`: kotlin.String)
+    
+    /**
+     * Stream `remote_path` to disk at `local_path`. Progress is emitted
+     * per chunk written (precise: bytes transferred always equal bytes
+     * already on disk). Cancellation is cooperative — checked between
+     * chunks and via `tokio::select!` so a cancel while a chunk read is
+     * in flight terminates the underlying connection. A cancelled
+     * transfer surfaces as `Drive9Exception` with `code = "cancelled"`.
+     *
+     * On any failure (network error, cancellation, write error) the
+     * partial local file is deleted so callers do not mistake a partial
+     * download for the full file. Successful downloads leave the file
+     * in place.
+     */
+    fun `downloadFile`(`remotePath`: kotlin.String, `localPath`: kotlin.String, `progress`: Drive9ProgressListener?, `cancel`: Drive9CancelToken?)
     
     /**
      * Search by metadata. `params` is forwarded verbatim to `drive9-rs` so
@@ -1303,6 +1743,24 @@ public interface Drive9MobileClientInterface {
     fun `list`(`path`: kotlin.String): List<Drive9FileInfo>
     
     fun `mkdir`(`path`: kotlin.String)
+    
+    /**
+     * Patch specific parts of a remote file using bytes read from
+     * `local_path`. `dirty_parts` are 1-based part numbers; the server
+     * keeps the unlisted parts. `part_size` overrides the server default
+     * when set. `new_size` is the total file size after patching.
+     *
+     * Input validation (rejected with `code = "other"`):
+     * - every `part_num >= 1`
+     * - `part_size`, if set, must be `> 0`
+     * - `new_size >= 0`
+     *
+     * Cancellation / progress are NOT supported in this iteration;
+     * dropping the call mid-patch leaves the server-side multipart upload
+     * to expire on its own. Callers that need cancel should compose with
+     * external task cancellation and accept the same caveat.
+     */
+    fun `patchFileParts`(`localPath`: kotlin.String, `remotePath`: kotlin.String, `dirtyParts`: List<kotlin.Int>, `newSize`: kotlin.Long, `partSize`: kotlin.Long?, `expectedRevision`: kotlin.Long?)
     
     fun `read`(`path`: kotlin.String): kotlin.ByteArray
     
@@ -1465,6 +1923,32 @@ open class Drive9MobileClient: Disposable, AutoCloseable, Drive9MobileClientInte
 
     
     /**
+     * Stream `remote_path` to disk at `local_path`. Progress is emitted
+     * per chunk written (precise: bytes transferred always equal bytes
+     * already on disk). Cancellation is cooperative — checked between
+     * chunks and via `tokio::select!` so a cancel while a chunk read is
+     * in flight terminates the underlying connection. A cancelled
+     * transfer surfaces as `Drive9Exception` with `code = "cancelled"`.
+     *
+     * On any failure (network error, cancellation, write error) the
+     * partial local file is deleted so callers do not mistake a partial
+     * download for the full file. Successful downloads leave the file
+     * in place.
+     */
+    @Throws(Drive9Exception::class)override fun `downloadFile`(`remotePath`: kotlin.String, `localPath`: kotlin.String, `progress`: Drive9ProgressListener?, `cancel`: Drive9CancelToken?)
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(Drive9Exception) { _status ->
+    UniffiLib.uniffi_drive9_mobile_core_fn_method_drive9mobileclient_download_file(
+        it,
+        FfiConverterString.lower(`remotePath`),FfiConverterString.lower(`localPath`),FfiConverterOptionalTypeDrive9ProgressListener.lower(`progress`),FfiConverterOptionalTypeDrive9CancelToken.lower(`cancel`),_status)
+}
+    }
+    
+    
+
+    
+    /**
      * Search by metadata. `params` is forwarded verbatim to `drive9-rs` so
      * URL encoding and server-side semantics stay in one place; the wrapper
      * does not interpret keys.
@@ -1521,6 +2005,35 @@ open class Drive9MobileClient: Disposable, AutoCloseable, Drive9MobileClientInte
     UniffiLib.uniffi_drive9_mobile_core_fn_method_drive9mobileclient_mkdir(
         it,
         FfiConverterString.lower(`path`),_status)
+}
+    }
+    
+    
+
+    
+    /**
+     * Patch specific parts of a remote file using bytes read from
+     * `local_path`. `dirty_parts` are 1-based part numbers; the server
+     * keeps the unlisted parts. `part_size` overrides the server default
+     * when set. `new_size` is the total file size after patching.
+     *
+     * Input validation (rejected with `code = "other"`):
+     * - every `part_num >= 1`
+     * - `part_size`, if set, must be `> 0`
+     * - `new_size >= 0`
+     *
+     * Cancellation / progress are NOT supported in this iteration;
+     * dropping the call mid-patch leaves the server-side multipart upload
+     * to expire on its own. Callers that need cancel should compose with
+     * external task cancellation and accept the same caveat.
+     */
+    @Throws(Drive9Exception::class)override fun `patchFileParts`(`localPath`: kotlin.String, `remotePath`: kotlin.String, `dirtyParts`: List<kotlin.Int>, `newSize`: kotlin.Long, `partSize`: kotlin.Long?, `expectedRevision`: kotlin.Long?)
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(Drive9Exception) { _status ->
+    UniffiLib.uniffi_drive9_mobile_core_fn_method_drive9mobileclient_patch_file_parts(
+        it,
+        FfiConverterString.lower(`localPath`),FfiConverterString.lower(`remotePath`),FfiConverterSequenceInt.lower(`dirtyParts`),FfiConverterLong.lower(`newSize`),FfiConverterOptionalLong.lower(`partSize`),FfiConverterOptionalLong.lower(`expectedRevision`),_status)
 }
     }
     
@@ -1639,6 +2152,330 @@ public object FfiConverterTypeDrive9MobileClient: FfiConverter<Drive9MobileClien
     override fun allocationSize(value: Drive9MobileClient) = 8UL
 
     override fun write(value: Drive9MobileClient, buf: ByteBuffer) {
+        buf.putLong(lower(value))
+    }
+}
+
+
+// This template implements a class for working with a Rust struct via a handle
+// to the live Rust struct on the other side of the FFI.
+//
+// There's some subtlety here, because we have to be careful not to operate on a Rust
+// struct after it has been dropped, and because we must expose a public API for freeing
+// theq Kotlin wrapper object in lieu of reliable finalizers. The core requirements are:
+//
+//   * Each instance holds an opaque handle to the underlying Rust struct.
+//     Method calls need to read this handle from the object's state and pass it in to
+//     the Rust FFI.
+//
+//   * When an instance is no longer needed, its handle should be passed to a
+//     special destructor function provided by the Rust FFI, which will drop the
+//     underlying Rust struct.
+//
+//   * Given an instance, calling code is expected to call the special
+//     `destroy` method in order to free it after use, either by calling it explicitly
+//     or by using a higher-level helper like the `use` method. Failing to do so risks
+//     leaking the underlying Rust struct.
+//
+//   * We can't assume that calling code will do the right thing, and must be prepared
+//     to handle Kotlin method calls executing concurrently with or even after a call to
+//     `destroy`, and to handle multiple (possibly concurrent!) calls to `destroy`.
+//
+//   * We must never allow Rust code to operate on the underlying Rust struct after
+//     the destructor has been called, and must never call the destructor more than once.
+//     Doing so may trigger memory unsafety.
+//
+//   * To mitigate many of the risks of leaking memory and use-after-free unsafety, a `Cleaner`
+//     is implemented to call the destructor when the Kotlin object becomes unreachable.
+//     This is done in a background thread. This is not a panacea, and client code should be aware that
+//      1. the thread may starve if some there are objects that have poorly performing
+//     `drop` methods or do significant work in their `drop` methods.
+//      2. the thread is shared across the whole library. This can be tuned by using `android_cleaner = true`,
+//         or `android = true` in the [`kotlin` section of the `uniffi.toml` file](https://mozilla.github.io/uniffi-rs/kotlin/configuration.html).
+//
+// If we try to implement this with mutual exclusion on access to the handle, there is the
+// possibility of a race between a method call and a concurrent call to `destroy`:
+//
+//    * Thread A starts a method call, reads the value of the handle, but is interrupted
+//      before it can pass the handle over the FFI to Rust.
+//    * Thread B calls `destroy` and frees the underlying Rust struct.
+//    * Thread A resumes, passing the already-read handle value to Rust and triggering
+//      a use-after-free.
+//
+// One possible solution would be to use a `ReadWriteLock`, with each method call taking
+// a read lock (and thus allowed to run concurrently) and the special `destroy` method
+// taking a write lock (and thus blocking on live method calls). However, we aim not to
+// generate methods with any hidden blocking semantics, and a `destroy` method that might
+// block if called incorrectly seems to meet that bar.
+//
+// So, we achieve our goals by giving each instance an associated `AtomicLong` counter to track
+// the number of in-flight method calls, and an `AtomicBoolean` flag to indicate whether `destroy`
+// has been called. These are updated according to the following rules:
+//
+//    * The initial value of the counter is 1, indicating a live object with no in-flight calls.
+//      The initial value for the flag is false.
+//
+//    * At the start of each method call, we atomically check the counter.
+//      If it is 0 then the underlying Rust struct has already been destroyed and the call is aborted.
+//      If it is nonzero them we atomically increment it by 1 and proceed with the method call.
+//
+//    * At the end of each method call, we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+//    * When `destroy` is called, we atomically flip the flag from false to true.
+//      If the flag was already true we silently fail.
+//      Otherwise we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+// Astute readers may observe that this all sounds very similar to the way that Rust's `Arc<T>` works,
+// and indeed it is, with the addition of a flag to guard against multiple calls to `destroy`.
+//
+// The overall effect is that the underlying Rust struct is destroyed only when `destroy` has been
+// called *and* all in-flight method calls have completed, avoiding violating any of the expectations
+// of the underlying Rust code.
+//
+// This makes a cleaner a better alternative to _not_ calling `destroy()` as
+// and when the object is finished with, but the abstraction is not perfect: if the Rust object's `drop`
+// method is slow, and/or there are many objects to cleanup, and it's on a low end Android device, then the cleaner
+// thread may be starved, and the app will leak memory.
+//
+// In this case, `destroy`ing manually may be a better solution.
+//
+// The cleaner can live side by side with the manual calling of `destroy`. In the order of responsiveness, uniffi objects
+// with Rust peers are reclaimed:
+//
+// 1. By calling the `destroy` method of the object, which calls `rustObject.free()`. If that doesn't happen:
+// 2. When the object becomes unreachable, AND the Cleaner thread gets to call `rustObject.free()`. If the thread is starved then:
+// 3. The memory is reclaimed when the process terminates.
+//
+// [1] https://stackoverflow.com/questions/24376768/can-java-finalize-an-object-when-it-is-still-in-scope/24380219
+//
+
+
+/**
+ * Foreign-implemented progress callback. UniFFI marshals this into a
+ * Kotlin interface and a Swift protocol; consumers implement
+ * `on_progress(transferred, total)`.
+ *
+ * `total` is 0 when the total size is unknown (e.g. download without a
+ * Content-Length). Implementations must be cheap; this is called per chunk
+ * during transfer.
+ */
+public interface Drive9ProgressListener {
+    
+    fun `onProgress`(`transferred`: kotlin.ULong, `total`: kotlin.ULong)
+    
+    companion object
+}
+
+/**
+ * Foreign-implemented progress callback. UniFFI marshals this into a
+ * Kotlin interface and a Swift protocol; consumers implement
+ * `on_progress(transferred, total)`.
+ *
+ * `total` is 0 when the total size is unknown (e.g. download without a
+ * Content-Length). Implementations must be cheap; this is called per chunk
+ * during transfer.
+ */
+open class Drive9ProgressListenerImpl: Disposable, AutoCloseable, Drive9ProgressListener
+{
+
+    @Suppress("UNUSED_PARAMETER")
+    /**
+     * @suppress
+     */
+    constructor(withHandle: UniffiWithHandle, handle: Long) {
+        this.handle = handle
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(handle))
+    }
+
+    /**
+     * @suppress
+     *
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    constructor(noHandle: NoHandle) {
+        this.handle = 0
+        this.cleanable = null
+    }
+
+    protected val handle: Long
+    protected val cleanable: UniffiCleaner.Cleanable?
+
+    private val wasDestroyed = AtomicBoolean(false)
+    private val callCounter = AtomicLong(1)
+
+    override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    @Synchronized
+    override fun close() {
+        this.destroy()
+    }
+
+    internal inline fun <R> callWithHandle(block: (handle: Long) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.get()
+            if (c == 0L) {
+                throw IllegalStateException("${this.javaClass.simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this.javaClass.simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the handle being freed concurrently.
+        try {
+            return block(this.uniffiCloneHandle())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiCleanAction(private val handle: Long) : Runnable {
+        override fun run() {
+            if (handle == 0.toLong()) {
+                // Fake object created with `NoHandle`, don't try to free.
+                return;
+            }
+            uniffiRustCall { status ->
+                UniffiLib.uniffi_drive9_mobile_core_fn_free_drive9progresslistener(handle, status)
+            }
+        }
+    }
+
+    /**
+     * @suppress
+     */
+    fun uniffiCloneHandle(): Long {
+        if (handle == 0.toLong()) {
+            throw InternalException("uniffiCloneHandle() called on NoHandle object");
+        }
+        return uniffiRustCall() { status ->
+            UniffiLib.uniffi_drive9_mobile_core_fn_clone_drive9progresslistener(handle, status)
+        }
+    }
+
+    override fun `onProgress`(`transferred`: kotlin.ULong, `total`: kotlin.ULong)
+        = 
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_drive9_mobile_core_fn_method_drive9progresslistener_on_progress(
+        it,
+        FfiConverterULong.lower(`transferred`),FfiConverterULong.lower(`total`),_status)
+}
+    }
+    
+    
+
+    
+
+    
+
+
+    
+    
+    /**
+     * @suppress
+     */
+    companion object
+    
+}
+
+
+
+// Put the implementation in an object so we don't pollute the top-level namespace
+internal object uniffiCallbackInterfaceDrive9ProgressListener {
+    internal object `onProgress`: UniffiCallbackInterfaceDrive9ProgressListenerMethod0 {
+        override fun callback(`uniffiHandle`: Long,`transferred`: Long,`total`: Long,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeDrive9ProgressListener.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`onProgress`(
+                    FfiConverterULong.lift(`transferred`),
+                    FfiConverterULong.lift(`total`),
+                )
+            }
+            val writeReturn = { _: Unit -> Unit }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+
+    internal object uniffiFree: UniffiCallbackInterfaceFree {
+        override fun callback(handle: Long) {
+            FfiConverterTypeDrive9ProgressListener.handleMap.remove(handle)
+        }
+    }
+
+    internal object uniffiClone: UniffiCallbackInterfaceClone {
+        override fun callback(handle: Long): Long {
+            return FfiConverterTypeDrive9ProgressListener.handleMap.clone(handle)
+        }
+    }
+
+    internal var vtable = UniffiVTableCallbackInterfaceDrive9ProgressListener.UniffiByValue(
+        uniffiFree,
+        uniffiClone,
+        `onProgress`,
+    )
+
+    // Registers the foreign callback with the Rust side.
+    // This method is generated for each callback interface.
+    internal fun register(lib: UniffiLib) {
+        lib.uniffi_drive9_mobile_core_fn_init_callback_vtable_drive9progresslistener(vtable)
+    }
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeDrive9ProgressListener: FfiConverter<Drive9ProgressListener, Long> {
+    internal val handleMap = UniffiHandleMap<Drive9ProgressListener>()
+
+    override fun lower(value: Drive9ProgressListener): Long {
+        if (value is Drive9ProgressListenerImpl) {
+             // Rust-implemented object.  Clone the handle and return it
+            return value.uniffiCloneHandle()
+         } else {
+            // Kotlin object, generate a new vtable handle and return that.
+            return handleMap.insert(value)
+         }
+    }
+
+    override fun lift(value: Long): Drive9ProgressListener {
+        if ((value and 1.toLong()) == 0.toLong()) {
+            // Rust-generated handle, construct a new class that uses the handle to implement the
+            // interface
+            return Drive9ProgressListenerImpl(UniffiWithHandle, value)
+        } else {
+            // Kotlin-generated handle, get the object from the handle map
+            return handleMap.remove(value)
+        }
+    }
+
+    override fun read(buf: ByteBuffer): Drive9ProgressListener {
+        return lift(buf.getLong())
+    }
+
+    override fun allocationSize(value: Drive9ProgressListener) = 8UL
+
+    override fun write(value: Drive9ProgressListener, buf: ByteBuffer) {
         buf.putLong(lower(value))
     }
 }
@@ -1986,6 +2823,98 @@ public object FfiConverterOptionalDouble: FfiConverterRustBuffer<kotlin.Double?>
         } else {
             buf.put(1)
             FfiConverterDouble.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeDrive9CancelToken: FfiConverterRustBuffer<Drive9CancelToken?> {
+    override fun read(buf: ByteBuffer): Drive9CancelToken? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeDrive9CancelToken.read(buf)
+    }
+
+    override fun allocationSize(value: Drive9CancelToken?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeDrive9CancelToken.allocationSize(value)
+        }
+    }
+
+    override fun write(value: Drive9CancelToken?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeDrive9CancelToken.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeDrive9ProgressListener: FfiConverterRustBuffer<Drive9ProgressListener?> {
+    override fun read(buf: ByteBuffer): Drive9ProgressListener? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeDrive9ProgressListener.read(buf)
+    }
+
+    override fun allocationSize(value: Drive9ProgressListener?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeDrive9ProgressListener.allocationSize(value)
+        }
+    }
+
+    override fun write(value: Drive9ProgressListener?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeDrive9ProgressListener.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceInt: FfiConverterRustBuffer<List<kotlin.Int>> {
+    override fun read(buf: ByteBuffer): List<kotlin.Int> {
+        val len = buf.getInt()
+        return List<kotlin.Int>(len) {
+            FfiConverterInt.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<kotlin.Int>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterInt.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<kotlin.Int>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterInt.write(it, buf)
         }
     }
 }

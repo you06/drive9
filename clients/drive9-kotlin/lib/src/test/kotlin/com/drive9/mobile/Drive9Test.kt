@@ -5,6 +5,11 @@ import com.sun.net.httpserver.HttpHandler
 import com.sun.net.httpserver.HttpServer
 import kotlinx.coroutines.runBlocking
 import uniffi.drive9_mobile_core.Drive9Exception
+import uniffi.drive9_mobile_core.Drive9ProgressListener
+import java.nio.file.Files
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.exists
+import kotlin.io.path.readBytes
 import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
 import kotlin.test.AfterTest
@@ -219,6 +224,104 @@ class Drive9Test {
         assertTrue("\"path\":\"/a.txt\"" in rows[0])
         assertTrue("\"size\":10" in rows[0])
         assertTrue("\"path\":\"/b\"" in rows[1])
+    }
+
+    @Test
+    fun downloadFileRoundtripWithProgress() = runBlocking {
+        val body = ByteArray(200_000) { 'a'.code.toByte() }
+        route("HEAD", "/v1/fs/big.bin") { ex ->
+            ex.responseHeaders.add("Content-Length", body.size.toString())
+            ex.responseHeaders.add("X-Dat9-Revision", "1")
+            ex.sendResponseHeaders(200, -1); ex.close()
+        }
+        route("GET", "/v1/fs/big.bin") { ex ->
+            ex.sendResponseHeaders(200, body.size.toLong())
+            ex.responseBody.write(body); ex.close()
+        }
+
+        val dest = Files.createTempFile("drive9-kotlin-download", ".bin")
+        val updates = mutableListOf<Pair<Long, Long>>()
+        val listener = object : Drive9ProgressListener {
+            override fun onProgress(transferred: ULong, total: ULong) {
+                synchronized(updates) {
+                    updates.add(transferred.toLong() to total.toLong())
+                }
+            }
+        }
+
+        val client = Drive9Client(baseUrl, "k")
+        try {
+            client.downloadFile("/big.bin", dest.toString(), listener, null)
+            assertContentEquals(body, dest.readBytes())
+            synchronized(updates) {
+                assertTrue(updates.size >= 2, "want at least start + finish, got $updates")
+                assertEquals(0L to 200_000L, updates.first())
+                assertEquals(200_000L to 200_000L, updates.last())
+                for (i in 1 until updates.size) {
+                    assertTrue(updates[i - 1].first <= updates[i].first, "non-monotonic at $i: $updates")
+                }
+            }
+        } finally {
+            dest.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun downloadFileCancellationDeletesPartialFile() = runBlocking {
+        route("HEAD", "/v1/fs/cancel.bin") { ex ->
+            ex.responseHeaders.add("Content-Length", "10000")
+            ex.sendResponseHeaders(200, -1); ex.close()
+        }
+        route("GET", "/v1/fs/cancel.bin") { ex ->
+            val body = ByteArray(10_000) { 'b'.code.toByte() }
+            ex.sendResponseHeaders(200, body.size.toLong())
+            ex.responseBody.write(body); ex.close()
+        }
+
+        val dest = Files.createTempFile("drive9-kotlin-cancel", ".bin")
+        // Pre-cancel: the download future never gets to write.
+        val token = Drive9CancelToken()
+        token.cancel()
+
+        val client = Drive9Client(baseUrl, "k")
+        try {
+            val err = assertFailsWith<Drive9Exception.Drive9> {
+                client.downloadFile("/cancel.bin", dest.toString(), null, token)
+            }
+            assertEquals("cancelled", err.code)
+            assertFalse(dest.exists(), "partial file should be cleaned up on cancel")
+        } finally {
+            dest.deleteIfExists()
+            token.close()
+        }
+    }
+
+    @Test
+    fun patchFilePartsValidatesInputs() = runBlocking {
+        val local = Files.createTempFile("drive9-kotlin-patch-validate", ".bin")
+        Files.write(local, byteArrayOf('x'.code.toByte(), 'x'.code.toByte()))
+        val client = Drive9Client(baseUrl, "k")
+        try {
+            val e1 = assertFailsWith<Drive9Exception.Drive9> {
+                client.patchFileParts(local.toString(), "/r", listOf(1), -1L, null, null)
+            }
+            assertEquals("other", e1.code)
+            assertTrue("new_size" in e1.detail, "want new_size error: ${e1.detail}")
+
+            val e2 = assertFailsWith<Drive9Exception.Drive9> {
+                client.patchFileParts(local.toString(), "/r", listOf(1), 100L, 0L, null)
+            }
+            assertEquals("other", e2.code)
+            assertTrue("part_size" in e2.detail, "want part_size error: ${e2.detail}")
+
+            val e3 = assertFailsWith<Drive9Exception.Drive9> {
+                client.patchFileParts(local.toString(), "/r", listOf(0, 1), 100L, null, null)
+            }
+            assertEquals("other", e3.code)
+            assertTrue("dirty_parts" in e3.detail, "want dirty_parts error: ${e3.detail}")
+        } finally {
+            local.deleteIfExists()
+        }
     }
 
     @Test

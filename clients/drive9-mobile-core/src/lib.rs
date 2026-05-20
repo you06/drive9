@@ -12,7 +12,10 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use drive9::{transfer::SeekableReader, Client, Drive9Error, FileInfo, SearchResult, StatResult};
+use drive9::{
+    transfer::{CancelSignal, SeekableReader, UploadProgress},
+    Client, Drive9Error, FileInfo, SearchResult, StatResult,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::Notify;
@@ -85,6 +88,12 @@ impl From<Drive9Error> for Drive9Exception {
                 code: "other".into(),
                 status_code: None,
                 detail: message,
+                server_revision: None,
+            },
+            Drive9Error::Cancelled => Drive9Exception::Drive9 {
+                code: "cancelled".into(),
+                status_code: None,
+                detail: "operation cancelled".into(),
                 server_revision: None,
             },
         }
@@ -187,6 +196,13 @@ impl Drive9CancelToken {
     }
 }
 
+impl CancelSignal for Drive9CancelToken {
+    fn is_cancelled(&self) -> bool {
+        // Delegate to the inherent method; both read the same AtomicBool.
+        Drive9CancelToken::is_cancelled(self)
+    }
+}
+
 impl Drive9CancelToken {
     /// Resolve when cancellation has been triggered. Safe to call repeatedly.
     async fn wait(&self) {
@@ -218,6 +234,19 @@ impl Drive9CancelToken {
 #[uniffi::export(with_foreign)]
 pub trait Drive9ProgressListener: Send + Sync {
     fn on_progress(&self, transferred: u64, total: u64);
+}
+
+/// Adapter that lets a foreign-implemented `Drive9ProgressListener` be used
+/// where `drive9-rs` expects a `transfer::UploadProgress`. Kept private so
+/// the foreign-only trait does not leak into the lower SDK's signature.
+struct ProgressAdapter {
+    inner: Arc<dyn Drive9ProgressListener>,
+}
+
+impl UploadProgress for ProgressAdapter {
+    fn on_progress(&self, transferred: u64, total: u64) {
+        self.inner.on_progress(transferred, total);
+    }
 }
 
 #[derive(uniffi::Object)]
@@ -406,6 +435,47 @@ impl Drive9MobileClient {
                 Err(e)
             }
         }
+    }
+
+    /// Stream `local_path` to `remote_path`. Progress is reported only
+    /// from completed part uploads (multipart) or from the success
+    /// transition of the single PUT (small file): a cancelled or failed
+    /// upload never emits a `(total, total)` event.
+    ///
+    /// Cancellation:
+    /// - If `cancel` is observed before [`Client::write_stream_with_hooks`]
+    ///   issues any HTTP request, no requests are sent.
+    /// - For multipart uploads, in-flight part PUTs are allowed to drain
+    ///   so server-side multipart state is consistent, then
+    ///   `abort_upload_v2(upload_id)` is invoked before this call
+    ///   returns. The resulting error has `code = "cancelled"`.
+    ///
+    /// `expected_revision` makes the write conditional; a 409 surfaces
+    /// as `code = "conflict"` with the server-reported `server_revision`.
+    pub fn upload_file(
+        &self,
+        local_path: String,
+        remote_path: String,
+        expected_revision: Option<i64>,
+        progress: Option<Arc<dyn Drive9ProgressListener>>,
+        cancel: Option<Arc<Drive9CancelToken>>,
+    ) -> Drive9Result<()> {
+        let file = std::fs::File::open(Path::new(&local_path)).map_err(Drive9Error::Io)?;
+        let size = file.metadata().map_err(Drive9Error::Io)?.len() as i64;
+        let reader: Box<dyn SeekableReader> = Box::new(file);
+        let progress_for_rs: Option<Arc<dyn UploadProgress>> =
+            progress.map(|p| Arc::new(ProgressAdapter { inner: p }) as Arc<dyn UploadProgress>);
+        let cancel_for_rs: Option<Arc<dyn CancelSignal>> =
+            cancel.map(|c| c as Arc<dyn CancelSignal>);
+        self.rt.block_on(self.inner.write_stream_with_hooks(
+            &remote_path,
+            reader,
+            size,
+            expected_revision.unwrap_or(-1),
+            progress_for_rs,
+            cancel_for_rs,
+        ))?;
+        Ok(())
     }
 
     /// Patch specific parts of a remote file using bytes read from

@@ -593,6 +593,110 @@ fn download_file_preserves_preexisting_destination_on_failure() {
 }
 
 #[test]
+fn upload_file_small_roundtrip_with_progress() {
+    let mut server = mockito::Server::new();
+    let _put = server
+        .mock("PUT", "/v1/fs/up.bin")
+        .with_status(200)
+        .create();
+
+    let client = Drive9MobileClient::new(server.url(), "k".into());
+    let local = writable_tempfile_path("upload_small");
+    std::fs::write(&local, vec![b'x'; 100]).unwrap();
+
+    let updates = Arc::new(Mutex::new(Vec::<(u64, u64)>::new()));
+    let listener: Arc<dyn Drive9ProgressListener> = Arc::new(RecordingListener {
+        updates: Arc::clone(&updates),
+    });
+    client
+        .upload_file(
+            local.to_string_lossy().to_string(),
+            "/up.bin".into(),
+            None,
+            Some(listener),
+            None,
+        )
+        .unwrap();
+
+    let updates = updates.lock().unwrap().clone();
+    assert_eq!(updates, vec![(0, 100), (100, 100)]);
+    std::fs::remove_file(&local).ok();
+}
+
+#[test]
+fn upload_file_cancel_before_returns_cancelled_without_request() {
+    let mut server = mockito::Server::new();
+    let put_mock = server
+        .mock("PUT", "/v1/fs/up-cancel.bin")
+        .with_status(200)
+        .expect(0)
+        .create();
+
+    let client = Drive9MobileClient::new(server.url(), "k".into());
+    let local = writable_tempfile_path("upload_cancel_before");
+    std::fs::write(&local, vec![b'x'; 100]).unwrap();
+
+    let token = Drive9CancelToken::new();
+    token.cancel();
+    let updates = Arc::new(Mutex::new(Vec::<(u64, u64)>::new()));
+    let listener: Arc<dyn Drive9ProgressListener> = Arc::new(RecordingListener {
+        updates: Arc::clone(&updates),
+    });
+    let err = client
+        .upload_file(
+            local.to_string_lossy().to_string(),
+            "/up-cancel.bin".into(),
+            None,
+            Some(listener),
+            Some(token),
+        )
+        .unwrap_err();
+    let Drive9Exception::Drive9 { code, detail, .. } = err;
+    assert_eq!(code, "cancelled");
+    assert!(detail.contains("cancel"), "want cancel in detail: {}", detail);
+
+    let updates = updates.lock().unwrap().clone();
+    assert_eq!(updates, vec![], "no progress should fire when cancel is pre-set");
+    put_mock.assert();
+    std::fs::remove_file(&local).ok();
+}
+
+#[test]
+fn upload_file_conditional_conflict_preserves_server_revision() {
+    let mut server = mockito::Server::new();
+    let _put = server
+        .mock("PUT", "/v1/fs/up-rev.bin")
+        .match_header("X-Dat9-Expected-Revision", "5")
+        .with_status(409)
+        .with_body(r#"{"error":"revision mismatch","server_revision":12}"#)
+        .create();
+
+    let client = Drive9MobileClient::new(server.url(), "k".into());
+    let local = writable_tempfile_path("upload_conflict");
+    std::fs::write(&local, vec![b'a'; 50]).unwrap();
+
+    let err = client
+        .upload_file(
+            local.to_string_lossy().to_string(),
+            "/up-rev.bin".into(),
+            Some(5),
+            None,
+            None,
+        )
+        .unwrap_err();
+    let Drive9Exception::Drive9 {
+        code,
+        status_code,
+        server_revision,
+        ..
+    } = err;
+    assert_eq!(code, "conflict");
+    assert_eq!(status_code, Some(409));
+    assert_eq!(server_revision, Some(12));
+    std::fs::remove_file(&local).ok();
+}
+
+#[test]
 fn detail_field_carries_message() {
     let mut server = mockito::Server::new();
     let _m = server

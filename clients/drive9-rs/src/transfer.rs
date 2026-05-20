@@ -205,15 +205,159 @@ impl Client {
         }
 
         let sync_reader = Arc::new(SyncReader::new(reader));
-        self.write_stream_v2_with_hooks(
-            path,
-            Arc::clone(&sync_reader),
-            size,
-            expected_revision,
-            progress,
-            cancel,
-        )
-        .await
+        match self
+            .write_stream_v2_with_hooks(
+                path,
+                Arc::clone(&sync_reader),
+                size,
+                expected_revision,
+                progress.clone(),
+                cancel.clone(),
+            )
+            .await
+        {
+            Ok(()) => Ok(()),
+            // Mirror write_stream_conditional: fall back to v1 when the
+            // server doesn't expose the v2 upload API. Without this the
+            // hooks path regresses against the no-hooks path on legacy
+            // backends.
+            Err(Drive9Error::Other(ref s)) if s.contains("v2 upload API not available") => {
+                self.write_stream_v1_with_hooks(
+                    path,
+                    sync_reader,
+                    size,
+                    expected_revision,
+                    progress,
+                    cancel,
+                )
+                .await
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// v1 (single-shot) upload with cancel + progress hooks.
+    ///
+    /// Cancellation is best-effort on v1: there is no server-side abort
+    /// endpoint, so observed-but-already-issued part PUTs run to
+    /// completion; we just refuse to start any further parts and return
+    /// [`Drive9Error::Cancelled`]. The v2 path remains the recommended
+    /// route when the server supports it.
+    async fn write_stream_v1_with_hooks(
+        &self,
+        path: &str,
+        reader: Arc<SyncReader>,
+        size: i64,
+        expected_revision: i64,
+        progress: Option<Arc<dyn UploadProgress>>,
+        cancel: Option<Arc<dyn CancelSignal>>,
+    ) -> Result<(), Drive9Error> {
+        if cancel.as_ref().map(|c| c.is_cancelled()).unwrap_or(false) {
+            return Err(Drive9Error::Cancelled);
+        }
+
+        let checksums = compute_part_checksums(Arc::clone(&reader), size, PART_SIZE).await?;
+
+        if cancel.as_ref().map(|c| c.is_cancelled()).unwrap_or(false) {
+            return Err(Drive9Error::Cancelled);
+        }
+
+        let plan = self
+            .initiate_upload(path, size, &checksums, expected_revision)
+            .await?;
+        let total = size.max(0) as u64;
+        if let Some(p) = &progress {
+            p.on_progress(0, total);
+        }
+
+        let parts_result = self
+            .upload_parts_v1_with_hooks(&plan, reader, total, progress.clone(), cancel.clone())
+            .await;
+
+        let cancelled = cancel.as_ref().map(|c| c.is_cancelled()).unwrap_or(false);
+        if cancelled {
+            return Err(Drive9Error::Cancelled);
+        }
+        parts_result?;
+        self.complete_upload(&plan.upload_id).await
+    }
+
+    async fn upload_parts_v1_with_hooks(
+        &self,
+        plan: &UploadPlan,
+        reader: Arc<SyncReader>,
+        total_bytes: u64,
+        progress: Option<Arc<dyn UploadProgress>>,
+        cancel: Option<Arc<dyn CancelSignal>>,
+    ) -> Result<(), Drive9Error> {
+        let mut std_part_size = plan.part_size;
+        if std_part_size <= 0 && !plan.parts.is_empty() {
+            std_part_size = plan.parts[0].size;
+        }
+        if std_part_size <= 0 {
+            std_part_size = PART_SIZE;
+        }
+        let max_concurrency = upload_parallelism(std_part_size);
+        let sem = Arc::new(Semaphore::new(max_concurrency));
+        let mut tasks = vec![];
+        let transferred = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        for part in &plan.parts {
+            let permit = Arc::clone(&sem).acquire_owned().await.unwrap();
+            let client = self.clone();
+            let r = Arc::clone(&reader);
+            let p = part.clone();
+            let offset = (p.number - 1) as i64 * std_part_size;
+            let cancel_for_task = cancel.clone();
+            let progress_for_task = progress.clone();
+            let transferred_for_task = Arc::clone(&transferred);
+            let task = tokio::spawn(async move {
+                let _permit = permit;
+                if cancel_for_task
+                    .as_ref()
+                    .map(|c| c.is_cancelled())
+                    .unwrap_or(false)
+                {
+                    return Err(Drive9Error::Cancelled);
+                }
+                let data = tokio::task::spawn_blocking(move || {
+                    r.seek_read(offset as u64, p.size as usize)
+                })
+                .await
+                .map_err(|e| Drive9Error::Other(format!("join error: {}", e)))?;
+                let data = data.map_err(Drive9Error::Io)?;
+                let part_bytes = data.len() as u64;
+                client.upload_one_part(&p, &data).await?;
+                let cancelled_now = cancel_for_task
+                    .as_ref()
+                    .map(|c| c.is_cancelled())
+                    .unwrap_or(false);
+                if !cancelled_now {
+                    let new_total = transferred_for_task
+                        .fetch_add(part_bytes, std::sync::atomic::Ordering::SeqCst)
+                        + part_bytes;
+                    if let Some(p) = &progress_for_task {
+                        p.on_progress(new_total, total_bytes);
+                    }
+                }
+                Ok::<(), Drive9Error>(())
+            });
+            tasks.push(task);
+        }
+        let mut first_err: Option<Drive9Error> = None;
+        for t in tasks {
+            match t.await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) if first_err.is_none() => first_err = Some(e),
+                Err(e) if first_err.is_none() => {
+                    first_err = Some(Drive9Error::Other(format!("task panicked: {}", e)))
+                }
+                _ => {}
+            }
+        }
+        if let Some(e) = first_err {
+            return Err(e);
+        }
+        Ok(())
     }
 
     async fn write_stream_small_with_hooks(

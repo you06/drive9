@@ -235,6 +235,139 @@ async fn multipart_cancel_between_parts_calls_abort_and_returns_cancelled() {
 }
 
 #[tokio::test]
+async fn multipart_falls_back_to_v1_when_v2_not_available() {
+    // v2 initiate returns 404 -> wrapper falls back to v1 initiate, then
+    // uploads parts via the v1 PUT URLs and completes via /v1/uploads/.../complete.
+    let mut server = mockito::Server::new_async().await;
+    let total = 6_000i64;
+    let part_size = 3_000i64;
+
+    let _v2_initiate = server
+        .mock("POST", "/v2/uploads/initiate")
+        .with_status(404)
+        .create_async()
+        .await;
+
+    let upload_id = "v1-upload";
+    let part1_url = format!("{}/legacy/part1", server.url());
+    let part2_url = format!("{}/legacy/part2", server.url());
+    let _v1_initiate = server
+        .mock("POST", "/v1/uploads/initiate")
+        .with_status(202)
+        .with_body(format!(
+            r#"{{"upload_id":"{u}","part_size":{ps},"parts":[
+                {{"number":1,"url":"{p1}","size":{ps}}},
+                {{"number":2,"url":"{p2}","size":{ps}}}
+            ]}}"#,
+            u = upload_id,
+            ps = part_size,
+            p1 = part1_url,
+            p2 = part2_url,
+        ))
+        .create_async()
+        .await;
+
+    let put1 = server
+        .mock("PUT", "/legacy/part1")
+        .with_status(200)
+        .with_header("etag", "e1")
+        .expect(1)
+        .create_async()
+        .await;
+    let put2 = server
+        .mock("PUT", "/legacy/part2")
+        .with_status(200)
+        .with_header("etag", "e2")
+        .expect(1)
+        .create_async()
+        .await;
+    let complete_mock = server
+        .mock("POST", format!("/v1/uploads/{}/complete", upload_id).as_str())
+        .with_status(200)
+        .expect(1)
+        .create_async()
+        .await;
+
+    let client = Client::new(server.url(), "k").with_small_file_threshold(1);
+    let progress = Arc::new(RecordingProgress::default());
+    let reader: Box<dyn SeekableReader> = Box::new(Cursor::new(vec![b'a'; total as usize]));
+    client
+        .write_stream_with_hooks(
+            "/v1-fallback.bin",
+            reader,
+            total,
+            -1,
+            Some(progress.clone() as Arc<dyn UploadProgress>),
+            None,
+        )
+        .await
+        .unwrap();
+
+    put1.assert_async().await;
+    put2.assert_async().await;
+    complete_mock.assert_async().await;
+
+    let updates = progress.updates.lock().unwrap().clone();
+    // First event is (0, total) emitted right after initiate.
+    assert_eq!(updates.first().copied(), Some((0, total as u64)));
+    // Final event reaches total.
+    assert_eq!(updates.last().copied(), Some((total as u64, total as u64)));
+    // Bytes transferred monotonically non-decreasing and never exceed total.
+    for w in updates.windows(2) {
+        assert!(w[0].0 <= w[1].0, "non-monotonic: {:?}", w);
+    }
+    for u in &updates {
+        assert!(u.0 <= u.1, "transferred > total: {:?}", u);
+    }
+}
+
+#[tokio::test]
+async fn v1_fallback_respects_cancel_before_parts() {
+    // v2 not available, then cancel before v1 issues any PUT.
+    let mut server = mockito::Server::new_async().await;
+    let _v2 = server
+        .mock("POST", "/v2/uploads/initiate")
+        .with_status(404)
+        .create_async()
+        .await;
+    let cancel = Arc::new(FlagCancel::default());
+    let cancel_for_handler = Arc::clone(&cancel);
+    let _v1 = server
+        .mock("POST", "/v1/uploads/initiate")
+        .with_status(202)
+        .with_body_from_request(move |_req| {
+            // The cancel fires while v1 initiate is in flight; the wrapper's
+            // post-initiate cancel check should kick in before any PUTs.
+            cancel_for_handler.cancel();
+            br#"{"upload_id":"u","part_size":100,"parts":[{"number":1,"url":"http://placeholder/p1","size":100}]}"#.to_vec()
+        })
+        .create_async()
+        .await;
+
+    let put_mock = server
+        .mock("PUT", "/placeholder/p1")
+        .expect(0)
+        .create_async()
+        .await;
+
+    let client = Client::new(server.url(), "k").with_small_file_threshold(1);
+    let reader: Box<dyn SeekableReader> = Box::new(Cursor::new(vec![b'a'; 100]));
+    let err = client
+        .write_stream_with_hooks(
+            "/v1-cancel.bin",
+            reader,
+            100,
+            -1,
+            None,
+            Some(cancel.clone() as Arc<dyn CancelSignal>),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Drive9Error::Cancelled), "got: {:?}", err);
+    put_mock.assert_async().await;
+}
+
+#[tokio::test]
 async fn existing_write_stream_path_unchanged() {
     // Sanity: the original write_stream_conditional still works without
     // hooks and goes through the existing v2 path.

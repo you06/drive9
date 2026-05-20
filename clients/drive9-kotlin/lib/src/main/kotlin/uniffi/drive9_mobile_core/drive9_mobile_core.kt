@@ -636,11 +636,23 @@ internal object IntegrityCheckingUniffiLib {
         uniffiCheckContractApiVersion(this)
         uniffiCheckApiChecksums(this)
     }
+    external fun uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_copy(
+    ): Short
     external fun uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_delete(
+    ): Short
+    external fun uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_find(
+    ): Short
+    external fun uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_grep(
     ): Short
     external fun uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_list(
     ): Short
+    external fun uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_mkdir(
+    ): Short
     external fun uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_read(
+    ): Short
+    external fun uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_rename(
+    ): Short
+    external fun uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_sql(
     ): Short
     external fun uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_stat(
     ): Short
@@ -672,11 +684,23 @@ internal object UniffiLib {
     ): Unit
     external fun uniffi_drive9_mobile_core_fn_constructor_drive9mobileclient_new(`baseUrl`: RustBuffer.ByValue,`apiKey`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Long
+    external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_copy(`ptr`: Long,`srcPath`: RustBuffer.ByValue,`dstPath`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
     external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_delete(`ptr`: Long,`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
+    external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_find(`ptr`: Long,`pathPrefix`: RustBuffer.ByValue,`params`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_grep(`ptr`: Long,`query`: RustBuffer.ByValue,`pathPrefix`: RustBuffer.ByValue,`limit`: Int,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_list(`ptr`: Long,`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_mkdir(`ptr`: Long,`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
     external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_read(`ptr`: Long,`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_rename(`ptr`: Long,`oldPath`: RustBuffer.ByValue,`newPath`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_sql(`ptr`: Long,`query`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_stat(`ptr`: Long,`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
@@ -801,13 +825,31 @@ private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
 }
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
+    if (lib.uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_copy() != 4600.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_delete() != 51992.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_find() != 51697.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_grep() != 11362.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_list() != 36043.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_mkdir() != 42794.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_read() != 41349.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_rename() != 5269.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_sql() != 49350.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_stat() != 14655.toShort()) {
@@ -1025,6 +1067,29 @@ public object FfiConverterLong: FfiConverter<Long, Long> {
 /**
  * @suppress
  */
+public object FfiConverterDouble: FfiConverter<Double, Double> {
+    override fun lift(value: Double): Double {
+        return value
+    }
+
+    override fun read(buf: ByteBuffer): Double {
+        return buf.getDouble()
+    }
+
+    override fun lower(value: Double): Double {
+        return value
+    }
+
+    override fun allocationSize(value: Double) = 8UL
+
+    override fun write(value: Double, buf: ByteBuffer) {
+        buf.putDouble(value)
+    }
+}
+
+/**
+ * @suppress
+ */
 public object FfiConverterBoolean: FfiConverter<Boolean, Byte> {
     override fun lift(value: Byte): Boolean {
         return value.toInt() != 0
@@ -1219,11 +1284,37 @@ public object FfiConverterByteArray: FfiConverterRustBuffer<ByteArray> {
 
 public interface Drive9MobileClientInterface {
     
+    fun `copy`(`srcPath`: kotlin.String, `dstPath`: kotlin.String)
+    
     fun `delete`(`path`: kotlin.String)
+    
+    /**
+     * Search by metadata. `params` is forwarded verbatim to `drive9-rs` so
+     * URL encoding and server-side semantics stay in one place; the wrapper
+     * does not interpret keys.
+     */
+    fun `find`(`pathPrefix`: kotlin.String, `params`: Map<kotlin.String, kotlin.String>): List<Drive9SearchResult>
+    
+    /**
+     * Search by content. `limit` of 0 (or negative) lets the server pick.
+     */
+    fun `grep`(`query`: kotlin.String, `pathPrefix`: kotlin.String, `limit`: kotlin.Int): List<Drive9SearchResult>
     
     fun `list`(`path`: kotlin.String): List<Drive9FileInfo>
     
+    fun `mkdir`(`path`: kotlin.String)
+    
     fun `read`(`path`: kotlin.String): kotlin.ByteArray
+    
+    fun `rename`(`oldPath`: kotlin.String, `newPath`: kotlin.String)
+    
+    /**
+     * Run a SQL query. Each result row is returned as a JSON-encoded string
+     * so the FFI surface stays free of arbitrary JSON values; consumers
+     * parse with their preferred JSON library. The wrapper does not
+     * interpret column names or types.
+     */
+    fun `sql`(`query`: kotlin.String): List<kotlin.String>
     
     fun `stat`(`path`: kotlin.String): Drive9StatResult
     
@@ -1347,6 +1438,19 @@ open class Drive9MobileClient: Disposable, AutoCloseable, Drive9MobileClientInte
     }
 
     
+    @Throws(Drive9Exception::class)override fun `copy`(`srcPath`: kotlin.String, `dstPath`: kotlin.String)
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(Drive9Exception) { _status ->
+    UniffiLib.uniffi_drive9_mobile_core_fn_method_drive9mobileclient_copy(
+        it,
+        FfiConverterString.lower(`srcPath`),FfiConverterString.lower(`dstPath`),_status)
+}
+    }
+    
+    
+
+    
     @Throws(Drive9Exception::class)override fun `delete`(`path`: kotlin.String)
         = 
     callWithHandle {
@@ -1357,6 +1461,42 @@ open class Drive9MobileClient: Disposable, AutoCloseable, Drive9MobileClientInte
 }
     }
     
+    
+
+    
+    /**
+     * Search by metadata. `params` is forwarded verbatim to `drive9-rs` so
+     * URL encoding and server-side semantics stay in one place; the wrapper
+     * does not interpret keys.
+     */
+    @Throws(Drive9Exception::class)override fun `find`(`pathPrefix`: kotlin.String, `params`: Map<kotlin.String, kotlin.String>): List<Drive9SearchResult> {
+            return FfiConverterSequenceTypeDrive9SearchResult.lift(
+    callWithHandle {
+    uniffiRustCallWithError(Drive9Exception) { _status ->
+    UniffiLib.uniffi_drive9_mobile_core_fn_method_drive9mobileclient_find(
+        it,
+        FfiConverterString.lower(`pathPrefix`),FfiConverterMapStringString.lower(`params`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Search by content. `limit` of 0 (or negative) lets the server pick.
+     */
+    @Throws(Drive9Exception::class)override fun `grep`(`query`: kotlin.String, `pathPrefix`: kotlin.String, `limit`: kotlin.Int): List<Drive9SearchResult> {
+            return FfiConverterSequenceTypeDrive9SearchResult.lift(
+    callWithHandle {
+    uniffiRustCallWithError(Drive9Exception) { _status ->
+    UniffiLib.uniffi_drive9_mobile_core_fn_method_drive9mobileclient_grep(
+        it,
+        FfiConverterString.lower(`query`),FfiConverterString.lower(`pathPrefix`),FfiConverterInt.lower(`limit`),_status)
+}
+    }
+    )
+    }
     
 
     
@@ -1374,6 +1514,19 @@ open class Drive9MobileClient: Disposable, AutoCloseable, Drive9MobileClientInte
     
 
     
+    @Throws(Drive9Exception::class)override fun `mkdir`(`path`: kotlin.String)
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(Drive9Exception) { _status ->
+    UniffiLib.uniffi_drive9_mobile_core_fn_method_drive9mobileclient_mkdir(
+        it,
+        FfiConverterString.lower(`path`),_status)
+}
+    }
+    
+    
+
+    
     @Throws(Drive9Exception::class)override fun `read`(`path`: kotlin.String): kotlin.ByteArray {
             return FfiConverterByteArray.lift(
     callWithHandle {
@@ -1381,6 +1534,39 @@ open class Drive9MobileClient: Disposable, AutoCloseable, Drive9MobileClientInte
     UniffiLib.uniffi_drive9_mobile_core_fn_method_drive9mobileclient_read(
         it,
         FfiConverterString.lower(`path`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(Drive9Exception::class)override fun `rename`(`oldPath`: kotlin.String, `newPath`: kotlin.String)
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(Drive9Exception) { _status ->
+    UniffiLib.uniffi_drive9_mobile_core_fn_method_drive9mobileclient_rename(
+        it,
+        FfiConverterString.lower(`oldPath`),FfiConverterString.lower(`newPath`),_status)
+}
+    }
+    
+    
+
+    
+    /**
+     * Run a SQL query. Each result row is returned as a JSON-encoded string
+     * so the FFI surface stays free of arbitrary JSON values; consumers
+     * parse with their preferred JSON library. The wrapper does not
+     * interpret column names or types.
+     */
+    @Throws(Drive9Exception::class)override fun `sql`(`query`: kotlin.String): List<kotlin.String> {
+            return FfiConverterSequenceString.lift(
+    callWithHandle {
+    uniffiRustCallWithError(Drive9Exception) { _status ->
+    UniffiLib.uniffi_drive9_mobile_core_fn_method_drive9mobileclient_sql(
+        it,
+        FfiConverterString.lower(`query`),_status)
 }
     }
     )
@@ -1505,6 +1691,57 @@ public object FfiConverterTypeDrive9FileInfo: FfiConverterRustBuffer<Drive9FileI
             FfiConverterLong.write(value.`size`, buf)
             FfiConverterBoolean.write(value.`isDir`, buf)
             FfiConverterOptionalLong.write(value.`mtimeUnix`, buf)
+    }
+}
+
+
+
+data class Drive9SearchResult (
+    var `path`: kotlin.String
+    , 
+    var `name`: kotlin.String
+    , 
+    var `sizeBytes`: kotlin.Long
+    , 
+    /**
+     * Optional search relevance score, when the server returns one.
+     */
+    var `score`: kotlin.Double?
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeDrive9SearchResult: FfiConverterRustBuffer<Drive9SearchResult> {
+    override fun read(buf: ByteBuffer): Drive9SearchResult {
+        return Drive9SearchResult(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterOptionalDouble.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: Drive9SearchResult) = (
+            FfiConverterString.allocationSize(value.`path`) +
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterLong.allocationSize(value.`sizeBytes`) +
+            FfiConverterOptionalDouble.allocationSize(value.`score`)
+    )
+
+    override fun write(value: Drive9SearchResult, buf: ByteBuffer) {
+            FfiConverterString.write(value.`path`, buf)
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterLong.write(value.`sizeBytes`, buf)
+            FfiConverterOptionalDouble.write(value.`score`, buf)
     }
 }
 
@@ -1727,6 +1964,66 @@ public object FfiConverterOptionalLong: FfiConverterRustBuffer<kotlin.Long?> {
 /**
  * @suppress
  */
+public object FfiConverterOptionalDouble: FfiConverterRustBuffer<kotlin.Double?> {
+    override fun read(buf: ByteBuffer): kotlin.Double? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterDouble.read(buf)
+    }
+
+    override fun allocationSize(value: kotlin.Double?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterDouble.allocationSize(value)
+        }
+    }
+
+    override fun write(value: kotlin.Double?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterDouble.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceString: FfiConverterRustBuffer<List<kotlin.String>> {
+    override fun read(buf: ByteBuffer): List<kotlin.String> {
+        val len = buf.getInt()
+        return List<kotlin.String>(len) {
+            FfiConverterString.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<kotlin.String>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterString.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<kotlin.String>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterString.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypeDrive9FileInfo: FfiConverterRustBuffer<List<Drive9FileInfo>> {
     override fun read(buf: ByteBuffer): List<Drive9FileInfo> {
         val len = buf.getInt()
@@ -1745,6 +2042,73 @@ public object FfiConverterSequenceTypeDrive9FileInfo: FfiConverterRustBuffer<Lis
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeDrive9FileInfo.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeDrive9SearchResult: FfiConverterRustBuffer<List<Drive9SearchResult>> {
+    override fun read(buf: ByteBuffer): List<Drive9SearchResult> {
+        val len = buf.getInt()
+        return List<Drive9SearchResult>(len) {
+            FfiConverterTypeDrive9SearchResult.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<Drive9SearchResult>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeDrive9SearchResult.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<Drive9SearchResult>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeDrive9SearchResult.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterMapStringString: FfiConverterRustBuffer<Map<kotlin.String, kotlin.String>> {
+    override fun read(buf: ByteBuffer): Map<kotlin.String, kotlin.String> {
+        val len = buf.getInt()
+        return buildMap<kotlin.String, kotlin.String>(len) {
+            repeat(len) {
+                val k = FfiConverterString.read(buf)
+                val v = FfiConverterString.read(buf)
+                this[k] = v
+            }
+        }
+    }
+
+    override fun allocationSize(value: Map<kotlin.String, kotlin.String>): ULong {
+        val spaceForMapSize = 4UL
+        val spaceForChildren = value.map { (k, v) ->
+            FfiConverterString.allocationSize(k) +
+            FfiConverterString.allocationSize(v)
+        }.sum()
+        return spaceForMapSize + spaceForChildren
+    }
+
+    override fun write(value: Map<kotlin.String, kotlin.String>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        // The parens on `(k, v)` here ensure we're calling the right method,
+        // which is important for compatibility with older android devices.
+        // Ref https://blog.danlew.net/2017/03/16/kotlin-puzzler-whose-line-is-it-anyways/
+        value.forEach { (k, v) ->
+            FfiConverterString.write(k, buf)
+            FfiConverterString.write(v, buf)
         }
     }
 }

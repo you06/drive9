@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use drive9::{
     transfer::{CancelSignal, SeekableReader, UploadProgress},
-    Client, Drive9Error, FileInfo, SearchResult, StatResult,
+    Client, Drive9Error, FileInfo, SearchResult, StatResult, StreamWriter,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::runtime::{Builder, Runtime};
@@ -437,6 +437,31 @@ impl Drive9MobileClient {
         }
     }
 
+    /// Open a streaming multipart upload. The returned
+    /// [`Drive9StreamUpload`] receives parts incrementally via
+    /// `write_part`, finalizes via `complete`, or aborts via `abort`.
+    /// `total_size` is the final file size in bytes; `part_size` and
+    /// concurrency are chosen by the server-side upload plan.
+    ///
+    /// Phase 4A surfaces only this object-based API; Kotlin Flow / Swift
+    /// AsyncSequence wrappers (Phase 4B) sit on top of it.
+    pub fn new_stream_upload(
+        &self,
+        remote_path: String,
+        total_size: i64,
+        expected_revision: Option<i64>,
+    ) -> Arc<Drive9StreamUpload> {
+        let inner = match expected_revision {
+            Some(rev) => self.inner.new_stream_writer_conditional(&remote_path, total_size, rev),
+            None => self.inner.new_stream_writer(&remote_path, total_size),
+        };
+        Arc::new(Drive9StreamUpload {
+            rt: Arc::clone(&self.rt),
+            inner: Arc::new(inner),
+            state: std::sync::Mutex::new(StreamState::Active),
+        })
+    }
+
     /// List vault secrets readable by the current api_key / token.
     ///
     /// The mobile FFI surface for vault is intentionally narrow: only
@@ -626,6 +651,155 @@ impl Drive9MobileClient {
 }
 
 const CHUNK_SIZE: usize = 64 * 1024;
+
+/// Lifecycle state of a [`Drive9StreamUpload`]. Enforced in the wrapper
+/// so foreign callers see consistent rejection messages regardless of
+/// what the underlying `drive9::StreamWriter` happens to report; the
+/// wrapper still consults the writer's own state for fine-grained
+/// per-part errors (those surface as `Errored` here).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StreamState {
+    Active,
+    Completed,
+    Aborted,
+    Errored,
+}
+
+/// Streaming multipart upload exposed across FFI as a UniFFI object.
+///
+/// State machine:
+/// - `Active` → can call `write_part` / `complete` / `abort`.
+/// - After `complete` returns Ok: `Completed`. All further calls reject.
+/// - After `abort` returns Ok: `Aborted`. `abort` itself stays
+///   idempotent; other calls reject.
+/// - When `write_part` or `complete` detects a background upload error
+///   surfaced by `drive9-rs`, the state transitions to `Errored`.
+///   `abort` is still callable in this state so callers can clean up
+///   server-side multipart bookkeeping; other calls reject.
+///
+/// Backpressure is the underlying `StreamWriter`'s semaphore: once 16
+/// parts are in flight, the next `write_part` blocks until a permit is
+/// released. The Phase 4A test
+/// `write_part_queued_at_permit_aborts_without_uploading` in
+/// `drive9-rs` covers the queued-vs-close race that this object
+/// inherits.
+#[derive(uniffi::Object)]
+pub struct Drive9StreamUpload {
+    rt: Arc<Runtime>,
+    inner: Arc<StreamWriter>,
+    state: std::sync::Mutex<StreamState>,
+}
+
+#[uniffi::export]
+impl Drive9StreamUpload {
+    /// Queue a part for upload. `part_num` is 1-based; parts may be
+    /// written in any order subject to the server-side plan. The call
+    /// returns once the part has been accepted by the underlying
+    /// concurrency-limit semaphore; the actual HTTP PUT runs in a Tokio
+    /// task and any failure surfaces in a subsequent `write_part` or
+    /// `complete` call (the object transitions to `Errored`).
+    pub fn write_part(&self, part_num: i32, data: Vec<u8>) -> Drive9Result<()> {
+        self.guard_writable_or_err("write_part")?;
+        let result = self.rt.block_on(self.inner.write_part(part_num, data));
+        self.observe_result(&result);
+        result?;
+        Ok(())
+    }
+
+    /// Finalize the upload. `final_part_num` is the part number for the
+    /// last chunk (which may be smaller than `part_size`); pass an
+    /// empty `final_data` if the last part was already written via
+    /// `write_part`.
+    pub fn complete(&self, final_part_num: i32, final_data: Vec<u8>) -> Drive9Result<()> {
+        self.guard_writable_or_err("complete")?;
+        let result = self
+            .rt
+            .block_on(self.inner.complete(final_part_num, final_data));
+        match result {
+            Ok(()) => {
+                *self.state.lock().unwrap() = StreamState::Completed;
+                Ok(())
+            }
+            Err(e) => {
+                *self.state.lock().unwrap() = StreamState::Errored;
+                Err(Drive9Exception::from(e))
+            }
+        }
+    }
+
+    /// Explicit abort. Idempotent: calling abort on an already-aborted
+    /// upload returns Ok without contacting the server again. Allowed
+    /// in any non-Completed state so callers can clean up server-side
+    /// multipart bookkeeping after an upload error.
+    pub fn abort(&self) -> Drive9Result<()> {
+        {
+            let s = self.state.lock().unwrap();
+            if *s == StreamState::Aborted {
+                return Ok(());
+            }
+            if *s == StreamState::Completed {
+                return Err(Drive9Exception::Drive9 {
+                    code: "other".into(),
+                    status_code: None,
+                    detail: "stream upload already completed; cannot abort".into(),
+                    server_revision: None,
+                });
+            }
+        }
+        let result = self.rt.block_on(self.inner.abort());
+        match result {
+            Ok(()) => {
+                *self.state.lock().unwrap() = StreamState::Aborted;
+                Ok(())
+            }
+            Err(e) => {
+                // We don't transition the state when the server abort
+                // itself failed — let the caller decide whether to
+                // retry. Returning an error here keeps that contract.
+                Err(Drive9Exception::from(e))
+            }
+        }
+    }
+}
+
+impl Drive9StreamUpload {
+    fn guard_writable_or_err(&self, op: &str) -> Drive9Result<()> {
+        let s = *self.state.lock().unwrap();
+        match s {
+            StreamState::Active => Ok(()),
+            StreamState::Completed => Err(Drive9Exception::Drive9 {
+                code: "other".into(),
+                status_code: None,
+                detail: format!("{}: stream upload already completed", op),
+                server_revision: None,
+            }),
+            StreamState::Aborted => Err(Drive9Exception::Drive9 {
+                code: "other".into(),
+                status_code: None,
+                detail: format!("{}: stream upload already aborted", op),
+                server_revision: None,
+            }),
+            StreamState::Errored => Err(Drive9Exception::Drive9 {
+                code: "other".into(),
+                status_code: None,
+                detail: format!(
+                    "{}: stream upload is in errored state; call abort() to clean up",
+                    op
+                ),
+                server_revision: None,
+            }),
+        }
+    }
+
+    fn observe_result(&self, result: &Result<(), Drive9Error>) {
+        if result.is_err() {
+            let mut s = self.state.lock().unwrap();
+            if *s == StreamState::Active {
+                *s = StreamState::Errored;
+            }
+        }
+    }
+}
 
 impl Drive9MobileClient {
     async fn download_file_inner(

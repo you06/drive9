@@ -827,6 +827,227 @@ fn vault_read_secret_field_url_encodes_special_chars_via_drive9_rs() {
 }
 
 #[test]
+fn stream_upload_happy_path_two_parts() {
+    let mut server = mockito::Server::new();
+    let upload_id = "u-stream";
+    let part_size: i64 = 100;
+    let _init = server
+        .mock("POST", "/v2/uploads/initiate")
+        .with_status(200)
+        .with_body(format!(
+            r#"{{"upload_id":"{}","key":"k","part_size":{},"total_parts":2}}"#,
+            upload_id, part_size
+        ))
+        .create();
+
+    let base = server.url();
+    let _presign = server
+        .mock(
+            "POST",
+            format!("/v2/uploads/{}/presign", upload_id).as_str(),
+        )
+        .with_status(200)
+        .with_body_from_request(move |req| {
+            let body: serde_json::Value =
+                serde_json::from_slice(req.body().unwrap()).unwrap();
+            let n = body["part_number"].as_i64().unwrap() as i32;
+            serde_json::to_vec(&serde_json::json!({
+                "number": n,
+                "url": format!("{}/upload/{}", base, n),
+                "size": part_size,
+            }))
+            .unwrap()
+        })
+        .expect_at_least(1)
+        .create();
+
+    let _put = server
+        .mock("PUT", mockito::Matcher::Regex(r"^/upload/\d+$".to_string()))
+        .with_status(200)
+        .with_header("etag", "e")
+        .expect(2)
+        .create();
+
+    let complete = server
+        .mock(
+            "POST",
+            format!("/v2/uploads/{}/complete", upload_id).as_str(),
+        )
+        .with_status(200)
+        .expect(1)
+        .create();
+
+    let client = Drive9MobileClient::new(server.url(), "k".into());
+    let upload = client.new_stream_upload("/big.bin".into(), part_size * 2, None);
+    upload
+        .write_part(1, vec![b'a'; part_size as usize])
+        .unwrap();
+    upload
+        .complete(2, vec![b'a'; part_size as usize])
+        .unwrap();
+    complete.assert();
+
+    // After complete, the object is terminal.
+    let err = upload
+        .write_part(3, vec![b'a'; part_size as usize])
+        .unwrap_err();
+    let Drive9Exception::Drive9 { code, detail, .. } = err;
+    assert_eq!(code, "other");
+    assert!(detail.contains("completed"), "want completed reason: {}", detail);
+}
+
+#[test]
+fn stream_upload_abort_after_write_calls_server_abort() {
+    let mut server = mockito::Server::new();
+    let upload_id = "u-stream-abort";
+    let part_size: i64 = 100;
+    let _init = server
+        .mock("POST", "/v2/uploads/initiate")
+        .with_status(200)
+        .with_body(format!(
+            r#"{{"upload_id":"{}","key":"k","part_size":{},"total_parts":1}}"#,
+            upload_id, part_size
+        ))
+        .create();
+    let base = server.url();
+    let _presign = server
+        .mock(
+            "POST",
+            format!("/v2/uploads/{}/presign", upload_id).as_str(),
+        )
+        .with_status(200)
+        .with_body_from_request(move |req| {
+            let body: serde_json::Value =
+                serde_json::from_slice(req.body().unwrap()).unwrap();
+            let n = body["part_number"].as_i64().unwrap() as i32;
+            serde_json::to_vec(&serde_json::json!({
+                "number": n,
+                "url": format!("{}/upload/{}", base, n),
+                "size": part_size,
+            }))
+            .unwrap()
+        })
+        .create();
+    let _put = server
+        .mock("PUT", "/upload/1")
+        .with_status(200)
+        .with_header("etag", "e")
+        .create();
+    let abort_mock = server
+        .mock(
+            "POST",
+            format!("/v2/uploads/{}/abort", upload_id).as_str(),
+        )
+        .with_status(200)
+        .expect(1)
+        .create();
+    let complete_mock = server
+        .mock(
+            "POST",
+            format!("/v2/uploads/{}/complete", upload_id).as_str(),
+        )
+        .expect(0)
+        .create();
+
+    let client = Drive9MobileClient::new(server.url(), "k".into());
+    let upload = client.new_stream_upload("/abrt.bin".into(), part_size, None);
+    upload
+        .write_part(1, vec![b'a'; part_size as usize])
+        .unwrap();
+    upload.abort().unwrap();
+    // Idempotent: second call returns Ok without re-hitting the server.
+    upload.abort().unwrap();
+    abort_mock.assert();
+    complete_mock.assert();
+
+    let err = upload
+        .write_part(2, vec![b'a'; part_size as usize])
+        .unwrap_err();
+    let Drive9Exception::Drive9 { code, detail, .. } = err;
+    assert_eq!(code, "other");
+    assert!(detail.contains("aborted"), "want aborted reason: {}", detail);
+}
+
+#[test]
+fn stream_upload_part_error_transitions_to_errored() {
+    let mut server = mockito::Server::new();
+    let upload_id = "u-stream-err";
+    let part_size: i64 = 100;
+    let _init = server
+        .mock("POST", "/v2/uploads/initiate")
+        .with_status(200)
+        .with_body(format!(
+            r#"{{"upload_id":"{}","key":"k","part_size":{},"total_parts":1}}"#,
+            upload_id, part_size
+        ))
+        .create();
+    let base = server.url();
+    let _presign = server
+        .mock(
+            "POST",
+            format!("/v2/uploads/{}/presign", upload_id).as_str(),
+        )
+        .with_status(200)
+        .with_body_from_request(move |req| {
+            let body: serde_json::Value =
+                serde_json::from_slice(req.body().unwrap()).unwrap();
+            let n = body["part_number"].as_i64().unwrap() as i32;
+            serde_json::to_vec(&serde_json::json!({
+                "number": n,
+                "url": format!("{}/upload/{}", base, n),
+                "size": part_size,
+            }))
+            .unwrap()
+        })
+        .create();
+    // First part PUT fails 500.
+    let _put = server
+        .mock("PUT", "/upload/1")
+        .with_status(500)
+        .with_body(r#"{"error":"boom"}"#)
+        .create();
+    // Abort must still be callable for cleanup.
+    let abort_mock = server
+        .mock(
+            "POST",
+            format!("/v2/uploads/{}/abort", upload_id).as_str(),
+        )
+        .with_status(200)
+        .expect(1)
+        .create();
+
+    let client = Drive9MobileClient::new(server.url(), "k".into());
+    let upload = client.new_stream_upload("/err.bin".into(), part_size, None);
+    upload
+        .write_part(1, vec![b'a'; part_size as usize])
+        .unwrap();
+    // Give the spawned PUT a chance to fail and set state.err. The
+    // next write_part observes the background error and rejects.
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let err = upload
+        .write_part(2, vec![b'a'; part_size as usize])
+        .unwrap_err();
+    let Drive9Exception::Drive9 { code, .. } = err;
+    assert_eq!(code, "other");
+
+    // complete() must also reject in Errored state.
+    let complete_err = upload
+        .complete(2, vec![b'a'; part_size as usize])
+        .unwrap_err();
+    let Drive9Exception::Drive9 { code, detail, .. } = complete_err;
+    assert_eq!(code, "other");
+    assert!(
+        detail.contains("errored") || detail.contains("background"),
+        "want errored / background reason: {}",
+        detail
+    );
+
+    // abort() is still allowed for server-side cleanup.
+    upload.abort().unwrap();
+    abort_mock.assert();
+}
+
+#[test]
 fn detail_field_carries_message() {
     let mut server = mockito::Server::new();
     let _m = server

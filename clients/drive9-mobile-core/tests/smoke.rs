@@ -697,6 +697,136 @@ fn upload_file_conditional_conflict_preserves_server_revision() {
 }
 
 #[test]
+fn vault_list_readable_secrets_happy_path() {
+    let mut server = mockito::Server::new();
+    let _m = server
+        .mock("GET", "/v1/vault/read")
+        .with_status(200)
+        .with_body(r#"{"secrets":["alpha","beta"]}"#)
+        .create();
+
+    let client = Drive9MobileClient::new(server.url(), "k".into());
+    let names = client.vault_list_readable_secrets().unwrap();
+    assert_eq!(names, vec!["alpha".to_string(), "beta".to_string()]);
+}
+
+#[test]
+fn vault_read_secret_field_returns_value_verbatim() {
+    let mut server = mockito::Server::new();
+    let _m = server
+        .mock("GET", "/v1/vault/read/api-keys/openai")
+        .with_status(200)
+        .with_body("sk-very-secret-value")
+        .create();
+
+    let client = Drive9MobileClient::new(server.url(), "k".into());
+    let value = client
+        .vault_read_secret_field("api-keys".into(), "openai".into())
+        .unwrap();
+    assert_eq!(value, "sk-very-secret-value");
+}
+
+#[test]
+fn vault_read_secret_field_passes_json_looking_string_through_untouched() {
+    let mut server = mockito::Server::new();
+    // The server stored a JSON-encoded string in the field. The wrapper
+    // must not parse, re-encode, or strip whitespace — return verbatim.
+    let raw = r#"{"k":1,"nested":{"flag":true}}"#;
+    let _m = server
+        .mock("GET", "/v1/vault/read/dest-config/payload")
+        .with_status(200)
+        .with_body(raw)
+        .create();
+
+    let client = Drive9MobileClient::new(server.url(), "k".into());
+    let value = client
+        .vault_read_secret_field("dest-config".into(), "payload".into())
+        .unwrap();
+    assert_eq!(value, raw, "wrapper must not interpret JSON-looking strings");
+}
+
+#[test]
+fn vault_list_unauthorized_surfaces_as_http_status() {
+    let mut server = mockito::Server::new();
+    let _m = server
+        .mock("GET", "/v1/vault/read")
+        .with_status(401)
+        .with_body(r#"{"error":"token expired"}"#)
+        .create();
+
+    let client = Drive9MobileClient::new(server.url(), "k".into());
+    let err = client.vault_list_readable_secrets().unwrap_err();
+    let Drive9Exception::Drive9 {
+        code,
+        status_code,
+        detail,
+        ..
+    } = err;
+    assert_eq!(code, "http_status");
+    assert_eq!(status_code, Some(401));
+    assert_eq!(detail, "token expired");
+}
+
+#[test]
+fn vault_read_field_forbidden_surfaces_as_http_status() {
+    let mut server = mockito::Server::new();
+    let _m = server
+        .mock("GET", "/v1/vault/read/private/value")
+        .with_status(403)
+        .with_body(r#"{"error":"out of scope"}"#)
+        .create();
+
+    let client = Drive9MobileClient::new(server.url(), "k".into());
+    let err = client
+        .vault_read_secret_field("private".into(), "value".into())
+        .unwrap_err();
+    let Drive9Exception::Drive9 {
+        code, status_code, ..
+    } = err;
+    assert_eq!(code, "http_status");
+    assert_eq!(status_code, Some(403));
+}
+
+#[test]
+fn vault_read_missing_secret_surfaces_as_http_status_404() {
+    let mut server = mockito::Server::new();
+    let _m = server
+        .mock("GET", "/v1/vault/read/no-such/field")
+        .with_status(404)
+        .with_body(r#"{"error":"secret not found"}"#)
+        .create();
+
+    let client = Drive9MobileClient::new(server.url(), "k".into());
+    let err = client
+        .vault_read_secret_field("no-such".into(), "field".into())
+        .unwrap_err();
+    let Drive9Exception::Drive9 {
+        code, status_code, ..
+    } = err;
+    assert_eq!(code, "http_status");
+    assert_eq!(status_code, Some(404));
+}
+
+#[test]
+fn vault_read_secret_field_url_encodes_special_chars_via_drive9_rs() {
+    // Confirm drive9-rs's existing urlencoding is exercised end-to-end:
+    // a name with a slash gets percent-encoded as %2F. The wrapper does
+    // not re-encode.
+    let mut server = mockito::Server::new();
+    let _m = server
+        .mock("GET", "/v1/vault/read/team%2Fbackend/api_key")
+        .with_status(200)
+        .with_body("encoded-value")
+        .create();
+
+    let client = Drive9MobileClient::new(server.url(), "k".into());
+    let value = client
+        .vault_read_secret_field("team/backend".into(), "api_key".into())
+        .unwrap();
+    assert_eq!(value, "encoded-value");
+}
+
+#[test]
 fn detail_field_carries_message() {
     let mut server = mockito::Server::new();
     let _m = server

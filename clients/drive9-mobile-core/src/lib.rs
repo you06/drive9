@@ -437,6 +437,45 @@ impl Drive9MobileClient {
         }
     }
 
+    /// List vault secrets readable by the current api_key / token.
+    ///
+    /// The mobile FFI surface for vault is intentionally narrow: only
+    /// read paths (this method and `vault_read_secret_field`) are
+    /// exposed; admin operations (create/update/delete secrets, issue/
+    /// revoke tokens, audit queries) stay off the mobile surface for
+    /// now. Token issuance and rotation happen elsewhere (backend) and
+    /// the resulting scoped token is what the mobile client uses as
+    /// `api_key`.
+    ///
+    /// Authorization failures (401/403) and missing-secret errors (404)
+    /// surface through the existing `code = "http_status"` channel; no
+    /// dedicated vault error code is introduced so foreign callers
+    /// only have one branch to write.
+    pub fn vault_list_readable_secrets(&self) -> Drive9Result<Vec<String>> {
+        let names = self.rt.block_on(self.inner.list_readable_vault_secrets())?;
+        Ok(names)
+    }
+
+    /// Read a single field from a vault secret.
+    ///
+    /// The wrapper does NOT inspect or transform the returned value: it
+    /// is whatever string drive9-rs received from the server, even if
+    /// that string looks like JSON. Callers that store JSON-encoded
+    /// values in vault fields must parse on their side.
+    ///
+    /// URL encoding for `name` and `field` is delegated to drive9-rs;
+    /// the wrapper does not re-encode.
+    pub fn vault_read_secret_field(
+        &self,
+        name: String,
+        field: String,
+    ) -> Drive9Result<String> {
+        let value = self
+            .rt
+            .block_on(self.inner.read_vault_secret_field(&name, &field))?;
+        Ok(value)
+    }
+
     /// Stream `local_path` to `remote_path`. Progress is reported only
     /// from completed part uploads (multipart) or from the success
     /// transition of the single PUT (small file): a cancelled or failed

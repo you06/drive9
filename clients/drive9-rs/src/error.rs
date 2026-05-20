@@ -23,6 +23,13 @@ pub enum Drive9Error {
 
     #[error("{0}")]
     Other(String),
+
+    /// Upload / download was cancelled cooperatively via a
+    /// `CancelSignal` passed to `write_stream_with_hooks` (or other
+    /// hook-aware API). For multipart uploads this is returned *after*
+    /// `abort_upload_v2` has been called to clean up server-side state.
+    #[error("operation cancelled")]
+    Cancelled,
 }
 
 pub(crate) async fn check_error(resp: reqwest::Response) -> Result<reqwest::Response, Drive9Error> {

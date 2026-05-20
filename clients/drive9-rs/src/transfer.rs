@@ -47,6 +47,52 @@ fn calc_parts(total_size: i64, part_size: i64) -> Vec<(i32, i64)> {
 pub trait SeekableReader: Read + Seek + Send {}
 impl<T: Read + Seek + Send> SeekableReader for T {}
 
+/// Upload progress hook for [`Client::write_stream_with_hooks`].
+///
+/// Currently only used by upload stream hooks (small file single PUT and
+/// v1 / v2 multipart). Not a general transfer-framework abstraction: if
+/// download or patch grow real progress reporting later, we'll decide
+/// whether to share a trait or have a separate one then.
+pub trait UploadProgress: Send + Sync {
+    /// `transferred` is monotonically non-decreasing across calls within
+    /// a single upload and never exceeds `total`. Implementations must be
+    /// cheap; they are invoked from upload worker tasks.
+    fn on_progress(&self, transferred: u64, total: u64);
+}
+
+/// Cooperative cancel signal for [`Client::write_stream_with_hooks`].
+///
+/// Polled at safe boundaries (before initiate, before each part upload).
+/// In-flight HTTP requests for an already-started part are allowed to
+/// finish so server-side multipart state stays consistent; the abort
+/// happens via [`abort_upload_v2`](Client::abort_upload_v2) after the
+/// outstanding work settles.
+///
+/// Only used by upload stream hooks for now; see [`UploadProgress`] for
+/// the same scope caveat.
+pub trait CancelSignal: Send + Sync {
+    fn is_cancelled(&self) -> bool;
+}
+
+/// Resolve once the cancel signal flips to `true`. Polls because trait
+/// objects can't easily expose `async` methods; the small-file PUT path
+/// races this against the single PUT future via `tokio::select!`, so an
+/// in-flight HTTP request gets dropped on cancel. Multipart paths poll
+/// `is_cancelled()` directly at part boundaries instead.
+async fn wait_for_cancel(cancel: Arc<dyn CancelSignal>) {
+    let mut delay = std::time::Duration::from_millis(10);
+    let max_delay = std::time::Duration::from_millis(100);
+    loop {
+        if cancel.is_cancelled() {
+            return;
+        }
+        tokio::time::sleep(delay).await;
+        if delay < max_delay {
+            delay = (delay * 2).min(max_delay);
+        }
+    }
+}
+
 struct SyncReader {
     inner: std::sync::Mutex<Box<dyn SeekableReader>>,
 }
@@ -112,6 +158,258 @@ impl Client {
             }
             Err(e) => Err(e),
         }
+    }
+
+    /// Upload `reader` to `path` with optional progress + cancel hooks.
+    ///
+    /// Behaviour vs [`write_stream_conditional`]:
+    /// - Cancel observed before [`initiate_upload_v2`] (or the small-file
+    ///   PUT): returns [`Drive9Error::Cancelled`] without any HTTP request.
+    /// - Cancel observed mid-upload: outstanding part PUTs are allowed to
+    ///   finish; subsequent parts are short-circuited; then
+    ///   [`abort_upload_v2`] is invoked so server-side state does not
+    ///   leak; returns [`Drive9Error::Cancelled`] regardless of any
+    ///   per-part errors observed while draining.
+    /// - Progress: each successful part adds its size to a counter and
+    ///   triggers `on_progress(transferred, total)`. Small-file path
+    ///   emits `(0, total)` before the PUT and `(total, total)` only on
+    ///   success. Cancelled / failed uploads never emit a "completed"
+    ///   progress event.
+    pub async fn write_stream_with_hooks(
+        &self,
+        path: &str,
+        reader: Box<dyn SeekableReader>,
+        size: i64,
+        expected_revision: i64,
+        progress: Option<Arc<dyn UploadProgress>>,
+        cancel: Option<Arc<dyn CancelSignal>>,
+    ) -> Result<(), Drive9Error> {
+        if let Some(c) = &cancel {
+            if c.is_cancelled() {
+                return Err(Drive9Error::Cancelled);
+            }
+        }
+
+        let threshold = self.small_file_threshold;
+        if size < threshold {
+            return self
+                .write_stream_small_with_hooks(
+                    path,
+                    reader,
+                    size,
+                    expected_revision,
+                    progress,
+                    cancel,
+                )
+                .await;
+        }
+
+        let sync_reader = Arc::new(SyncReader::new(reader));
+        self.write_stream_v2_with_hooks(
+            path,
+            Arc::clone(&sync_reader),
+            size,
+            expected_revision,
+            progress,
+            cancel,
+        )
+        .await
+    }
+
+    async fn write_stream_small_with_hooks(
+        &self,
+        path: &str,
+        reader: Box<dyn SeekableReader>,
+        size: i64,
+        expected_revision: i64,
+        progress: Option<Arc<dyn UploadProgress>>,
+        cancel: Option<Arc<dyn CancelSignal>>,
+    ) -> Result<(), Drive9Error> {
+        let total = size.max(0) as u64;
+        if let Some(p) = &progress {
+            p.on_progress(0, total);
+        }
+
+        let data = tokio::task::spawn_blocking(move || {
+            let mut buf = Vec::new();
+            let mut r = reader;
+            r.read_to_end(&mut buf)?;
+            Ok::<_, std::io::Error>(buf)
+        })
+        .await
+        .map_err(|e| Drive9Error::Other(format!("join error: {}", e)))?
+        .map_err(Drive9Error::Io)?;
+
+        if let Some(c) = &cancel {
+            if c.is_cancelled() {
+                return Err(Drive9Error::Cancelled);
+            }
+        }
+
+        let upload_fut = self.write_with_revision(path, &data, expected_revision);
+        let result = match cancel.clone() {
+            Some(c) => tokio::select! {
+                r = upload_fut => r,
+                _ = wait_for_cancel(c) => return Err(Drive9Error::Cancelled),
+            },
+            None => upload_fut.await,
+        };
+        result?;
+        if let Some(p) = &progress {
+            p.on_progress(total, total);
+        }
+        Ok(())
+    }
+
+    async fn write_stream_v2_with_hooks(
+        &self,
+        path: &str,
+        reader: Arc<SyncReader>,
+        size: i64,
+        expected_revision: i64,
+        progress: Option<Arc<dyn UploadProgress>>,
+        cancel: Option<Arc<dyn CancelSignal>>,
+    ) -> Result<(), Drive9Error> {
+        let plan = self.initiate_upload_v2(path, size, expected_revision).await?;
+        let total = size.max(0) as u64;
+        if let Some(p) = &progress {
+            p.on_progress(0, total);
+        }
+
+        let upload_id = plan.upload_id.clone();
+        let parts_result = self
+            .upload_parts_v2_with_hooks(&plan, reader, total, progress.clone(), cancel.clone())
+            .await;
+
+        // If cancel was observed at any point, treat the whole upload as
+        // cancelled and clean up server-side multipart state. We do this
+        // even when upload_parts_v2_with_hooks returned Ok, because a
+        // race between the last part completing and the cancel signal
+        // arriving should still produce a Cancelled outcome to the
+        // caller.
+        let cancelled = cancel.as_ref().map(|c| c.is_cancelled()).unwrap_or(false);
+        if cancelled {
+            let _ = self.abort_upload_v2(&upload_id).await;
+            return Err(Drive9Error::Cancelled);
+        }
+
+        let parts = match parts_result {
+            Ok(p) => p,
+            Err(e) => {
+                let _ = self.abort_upload_v2(&upload_id).await;
+                return Err(e);
+            }
+        };
+
+        if let Err(e) = self.complete_upload_v2(&upload_id, &parts).await {
+            let _ = self.abort_upload_v2(&upload_id).await;
+            return Err(e);
+        }
+        Ok(())
+    }
+
+    async fn upload_parts_v2_with_hooks(
+        &self,
+        plan: &UploadPlanV2,
+        reader: Arc<SyncReader>,
+        total_bytes: u64,
+        progress: Option<Arc<dyn UploadProgress>>,
+        cancel: Option<Arc<dyn CancelSignal>>,
+    ) -> Result<Vec<CompletePart>, Drive9Error> {
+        let part_size = plan.part_size;
+        let total_parts = plan.total_parts;
+        let upload_id = plan.upload_id.clone();
+        let parallelism = upload_parallelism(part_size);
+
+        let mut presigned = vec![];
+        let batch_size = parallelism as i32;
+        let mut start = 1i32;
+        while start <= total_parts {
+            if cancel.as_ref().map(|c| c.is_cancelled()).unwrap_or(false) {
+                return Err(Drive9Error::Cancelled);
+            }
+            let end = (start + batch_size - 1).min(total_parts);
+            let batch = self.presign_batch(&upload_id, start, end).await?;
+            presigned.extend(batch);
+            start = end + 1;
+        }
+
+        let sem = Arc::new(Semaphore::new(parallelism));
+        let mut tasks = vec![];
+        let results: Vec<Option<CompletePart>> = vec![None; total_parts as usize];
+        let results_arc = Arc::new(tokio::sync::Mutex::new(results));
+        let transferred = Arc::new(std::sync::atomic::AtomicU64::new(0));
+
+        for pp in presigned {
+            let permit = Arc::clone(&sem).acquire_owned().await.unwrap();
+            let client = self.clone();
+            let r = Arc::clone(&reader);
+            let res = Arc::clone(&results_arc);
+            let psize = part_size;
+            let uid = upload_id.clone();
+            let cancel_for_task = cancel.clone();
+            let progress_for_task = progress.clone();
+            let transferred_for_task = Arc::clone(&transferred);
+            let task = tokio::spawn(async move {
+                let _permit = permit;
+                if cancel_for_task
+                    .as_ref()
+                    .map(|c| c.is_cancelled())
+                    .unwrap_or(false)
+                {
+                    return Err(Drive9Error::Cancelled);
+                }
+                let offset = (pp.number - 1) as i64 * psize;
+                let data = tokio::task::spawn_blocking(move || {
+                    r.seek_read(offset as u64, pp.size as usize)
+                })
+                .await
+                .map_err(|e| Drive9Error::Other(format!("join error: {}", e)))?;
+                let data = data.map_err(Drive9Error::Io)?;
+                let part_bytes = data.len() as u64;
+                let etag = client.upload_one_part_v2(&uid, &pp, &data).await?;
+                // Progress is only emitted if the upload as a whole has
+                // not been cancelled at the moment this part completes;
+                // this avoids the "got total but actually cancelled"
+                // race the reviewer flagged.
+                let cancelled_now = cancel_for_task
+                    .as_ref()
+                    .map(|c| c.is_cancelled())
+                    .unwrap_or(false);
+                if !cancelled_now {
+                    let new_total = transferred_for_task
+                        .fetch_add(part_bytes, std::sync::atomic::Ordering::SeqCst)
+                        + part_bytes;
+                    if let Some(p) = &progress_for_task {
+                        p.on_progress(new_total, total_bytes);
+                    }
+                }
+                res.lock().await[pp.number as usize - 1] = Some(CompletePart {
+                    number: pp.number,
+                    etag,
+                });
+                Ok::<(), Drive9Error>(())
+            });
+            tasks.push(task);
+        }
+
+        let mut first_err: Option<Drive9Error> = None;
+        for t in tasks {
+            match t.await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) if first_err.is_none() => first_err = Some(e),
+                Err(e) if first_err.is_none() => {
+                    first_err = Some(Drive9Error::Other(format!("task panicked: {}", e)))
+                }
+                _ => {}
+            }
+        }
+        if let Some(e) = first_err {
+            return Err(e);
+        }
+
+        let guard = results_arc.lock().await;
+        Ok(guard.iter().filter_map(|x| x.clone()).collect())
     }
 
     async fn write_stream_v1(

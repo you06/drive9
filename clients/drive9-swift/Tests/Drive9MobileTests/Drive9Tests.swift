@@ -1,6 +1,30 @@
 import XCTest
 @testable import Drive9Mobile
 
+/// Captures every `onProgress` callback for assertion in tests. The Rust
+/// side calls into Swift from a Tokio worker thread, so guard the buffer
+/// with a lock.
+final class RecordingProgressListener: Drive9ProgressListener, @unchecked Sendable {
+    struct Update {
+        let transferred: UInt64
+        let total: UInt64
+    }
+    private var updates: [Update] = []
+    private let lock = NSLock()
+
+    func onProgress(transferred: UInt64, total: UInt64) {
+        lock.lock()
+        updates.append(Update(transferred: transferred, total: total))
+        lock.unlock()
+    }
+
+    func snapshot() -> [Update] {
+        lock.lock()
+        defer { lock.unlock() }
+        return updates
+    }
+}
+
 /// Smoke tests against an in-process `MockHTTPServer`. They exercise the FFI
 /// surface end-to-end (native lib load, runtime dispatch, error mapping)
 /// without needing a real Drive9 backend.
@@ -156,6 +180,131 @@ final class Drive9Tests: XCTestCase {
         XCTAssertTrue(rows[0].contains("\"path\":\"/a.txt\""))
         XCTAssertTrue(rows[0].contains("\"size\":10"))
         XCTAssertTrue(rows[1].contains("\"path\":\"/b\""))
+    }
+
+    func testDownloadFileRoundtripWithProgress() async throws {
+        let body = Data(repeating: UInt8(ascii: "a"), count: 200_000)
+        server.route("HEAD", "/v1/fs/big.bin") { _ in
+            MockResponse(
+                status: 200,
+                body: Data(),
+                extraHeaders: [
+                    "Content-Length": "\(body.count)",
+                    "X-Dat9-Revision": "1",
+                ]
+            )
+        }
+        server.route("GET", "/v1/fs/big.bin") { _ in
+            MockResponse(status: 200, body: body)
+        }
+
+        let dest = FileManager.default.temporaryDirectory
+            .appendingPathComponent("drive9-swift-download-\(UUID().uuidString).bin")
+        defer { try? FileManager.default.removeItem(at: dest) }
+
+        let recorder = RecordingProgressListener()
+        let client = Drive9Client(baseUrl: server.baseURL, apiKey: "k")
+        try await client.downloadFile(
+            remotePath: "/big.bin",
+            localPath: dest.path,
+            progress: recorder
+        )
+
+        XCTAssertEqual(try Data(contentsOf: dest), body)
+        let updates = recorder.snapshot()
+        XCTAssertGreaterThanOrEqual(updates.count, 2, "want at least start + finish")
+        XCTAssertEqual(updates.first?.transferred, 0)
+        XCTAssertEqual(updates.first?.total, 200_000)
+        XCTAssertEqual(updates.last?.transferred, 200_000)
+        XCTAssertEqual(updates.last?.total, 200_000)
+        for i in 1..<updates.count {
+            XCTAssertLessThanOrEqual(
+                updates[i - 1].transferred,
+                updates[i].transferred,
+                "non-monotonic progress at index \(i)"
+            )
+        }
+    }
+
+    func testDownloadFileCancellationDeletesPartialFile() async throws {
+        let body = Data(repeating: UInt8(ascii: "b"), count: 10_000)
+        server.route("HEAD", "/v1/fs/cancel.bin") { _ in
+            MockResponse(status: 200, body: Data(), extraHeaders: ["Content-Length": "\(body.count)"])
+        }
+        server.route("GET", "/v1/fs/cancel.bin") { _ in
+            MockResponse(status: 200, body: body)
+        }
+
+        let dest = FileManager.default.temporaryDirectory
+            .appendingPathComponent("drive9-swift-cancel-\(UUID().uuidString).bin")
+        defer { try? FileManager.default.removeItem(at: dest) }
+
+        let token = Drive9CancelToken()
+        token.cancel()
+
+        let client = Drive9Client(baseUrl: server.baseURL, apiKey: "k")
+        do {
+            try await client.downloadFile(
+                remotePath: "/cancel.bin",
+                localPath: dest.path,
+                progress: nil,
+                cancel: token
+            )
+            XCTFail("expected cancellation")
+        } catch let error as Drive9Exception {
+            guard case let .Drive9(code, _, _, _) = error else {
+                XCTFail("unexpected variant: \(error)")
+                return
+            }
+            XCTAssertEqual(code, "cancelled")
+            XCTAssertFalse(
+                FileManager.default.fileExists(atPath: dest.path),
+                "partial file should be cleaned up on cancel"
+            )
+        }
+    }
+
+    func testPatchFilePartsValidatesInputs() async throws {
+        let local = FileManager.default.temporaryDirectory
+            .appendingPathComponent("drive9-swift-patch-\(UUID().uuidString).bin")
+        try Data("xx".utf8).write(to: local)
+        defer { try? FileManager.default.removeItem(at: local) }
+
+        let client = Drive9Client(baseUrl: server.baseURL, apiKey: "k")
+        await assertPatchValidationError(client: client, localPath: local.path, newSize: -1, partSize: nil, dirtyParts: [1], wantToken: "new_size")
+        await assertPatchValidationError(client: client, localPath: local.path, newSize: 100, partSize: 0, dirtyParts: [1], wantToken: "part_size")
+        await assertPatchValidationError(client: client, localPath: local.path, newSize: 100, partSize: nil, dirtyParts: [0, 1], wantToken: "dirty_parts")
+    }
+
+    private func assertPatchValidationError(
+        client: Drive9Client,
+        localPath: String,
+        newSize: Int64,
+        partSize: Int64?,
+        dirtyParts: [Int32],
+        wantToken: String,
+        file: StaticString = #file,
+        line: UInt = #line
+    ) async {
+        do {
+            try await client.patchFileParts(
+                localPath: localPath,
+                remotePath: "/r",
+                dirtyParts: dirtyParts,
+                newSize: newSize,
+                partSize: partSize
+            )
+            XCTFail("expected validation error", file: file, line: line)
+        } catch let error as Drive9Exception {
+            guard case let .Drive9(code, _, detail, _) = error else {
+                XCTFail("unexpected variant: \(error)", file: file, line: line)
+                return
+            }
+            XCTAssertEqual(code, "other", file: file, line: line)
+            XCTAssertTrue(detail.contains(wantToken), "expected \(wantToken) in: \(detail)", file: file, line: line)
+        } catch {
+            XCTFail("unexpected error type: \(error)", file: file, line: line)
+        }
     }
 
     func testStatusErrorCarriesCode() async throws {

@@ -414,7 +414,13 @@ fileprivate final class UniffiHandleMap<T>: @unchecked Sendable {
 
 
 // Public interface members begin here.
-
+// Magic number for the Rust proxy to call using the same mechanism as every other method,
+// to free the callback once it's dropped by Rust.
+private let IDX_CALLBACK_FREE: Int32 = 0
+// Callback return codes
+private let UNIFFI_CALLBACK_SUCCESS: Int32 = 0
+private let UNIFFI_CALLBACK_ERROR: Int32 = 1
+private let UNIFFI_CALLBACK_UNEXPECTED_ERROR: Int32 = 2
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -428,6 +434,22 @@ fileprivate struct FfiConverterInt32: FfiConverterPrimitive {
     }
 
     public static func write(_ value: Int32, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterUInt64: FfiConverterPrimitive {
+    typealias FfiType = UInt64
+    typealias SwiftType = UInt64
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt64 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
         writeInt(&buf, lower(value))
     }
 }
@@ -550,11 +572,182 @@ fileprivate struct FfiConverterData: FfiConverterRustBuffer {
 
 
 
+/**
+ * Cooperative cancellation handle. Construct one on the caller side, pass it
+ * into `upload_file` / `download_file` / `patch_file_parts`, and call
+ * `cancel()` from another task / thread to abort the transfer.
+ *
+ * Cancellation is cooperative: in-flight HTTP requests are dropped when the
+ * transfer future is racing against `cancel()`, which terminates the
+ * underlying connection. Partial uploads on the server are NOT explicitly
+ * aborted (drive9-rs handles its own cleanup on internal errors, but a
+ * drop-on-cancel from outside cannot reach those abort paths). Server-side
+ * upload sessions typically expire.
+ */
+public protocol Drive9CancelTokenProtocol: AnyObject, Sendable {
+    
+    func cancel() 
+    
+    func isCancelled()  -> Bool
+    
+}
+/**
+ * Cooperative cancellation handle. Construct one on the caller side, pass it
+ * into `upload_file` / `download_file` / `patch_file_parts`, and call
+ * `cancel()` from another task / thread to abort the transfer.
+ *
+ * Cancellation is cooperative: in-flight HTTP requests are dropped when the
+ * transfer future is racing against `cancel()`, which terminates the
+ * underlying connection. Partial uploads on the server are NOT explicitly
+ * aborted (drive9-rs handles its own cleanup on internal errors, but a
+ * drop-on-cancel from outside cannot reach those abort paths). Server-side
+ * upload sessions typically expire.
+ */
+open class Drive9CancelToken: Drive9CancelTokenProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_drive9_mobile_core_fn_clone_drive9canceltoken(self.handle, $0) }
+    }
+public convenience init() {
+    let handle =
+        try! rustCall() {
+    uniffi_drive9_mobile_core_fn_constructor_drive9canceltoken_new($0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_drive9_mobile_core_fn_free_drive9canceltoken(handle, $0) }
+    }
+
+    
+
+    
+open func cancel()  {try! rustCall() {
+    uniffi_drive9_mobile_core_fn_method_drive9canceltoken_cancel(
+            self.uniffiCloneHandle(),$0
+    )
+}
+}
+    
+open func isCancelled() -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_drive9_mobile_core_fn_method_drive9canceltoken_is_cancelled(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDrive9CancelToken: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = Drive9CancelToken
+
+    public static func lift(_ handle: UInt64) throws -> Drive9CancelToken {
+        return Drive9CancelToken(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: Drive9CancelToken) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Drive9CancelToken {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: Drive9CancelToken, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDrive9CancelToken_lift(_ handle: UInt64) throws -> Drive9CancelToken {
+    return try FfiConverterTypeDrive9CancelToken.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDrive9CancelToken_lower(_ value: Drive9CancelToken) -> UInt64 {
+    return FfiConverterTypeDrive9CancelToken.lower(value)
+}
+
+
+
+
+
+
 public protocol Drive9MobileClientProtocol: AnyObject, Sendable {
     
     func copy(srcPath: String, dstPath: String) throws 
     
     func delete(path: String) throws 
+    
+    /**
+     * Stream `remote_path` to disk at `local_path`. Progress is emitted
+     * per chunk written (precise: bytes transferred always equal bytes
+     * already on disk). Cancellation is cooperative — checked between
+     * chunks and via `tokio::select!` so a cancel while a chunk read is
+     * in flight terminates the underlying connection. A cancelled
+     * transfer surfaces as `Drive9Exception` with `code = "cancelled"`.
+     *
+     * On any failure (network error, cancellation, write error) the
+     * partial local file is deleted so callers do not mistake a partial
+     * download for the full file. Successful downloads leave the file
+     * in place.
+     */
+    func downloadFile(remotePath: String, localPath: String, progress: Drive9ProgressListener?, cancel: Drive9CancelToken?) throws 
     
     /**
      * Search by metadata. `params` is forwarded verbatim to `drive9-rs` so
@@ -571,6 +764,24 @@ public protocol Drive9MobileClientProtocol: AnyObject, Sendable {
     func list(path: String) throws  -> [Drive9FileInfo]
     
     func mkdir(path: String) throws 
+    
+    /**
+     * Patch specific parts of a remote file using bytes read from
+     * `local_path`. `dirty_parts` are 1-based part numbers; the server
+     * keeps the unlisted parts. `part_size` overrides the server default
+     * when set. `new_size` is the total file size after patching.
+     *
+     * Input validation (rejected with `code = "other"`):
+     * - every `part_num >= 1`
+     * - `part_size`, if set, must be `> 0`
+     * - `new_size >= 0`
+     *
+     * Cancellation / progress are NOT supported in this iteration;
+     * dropping the call mid-patch leaves the server-side multipart upload
+     * to expire on its own. Callers that need cancel should compose with
+     * external task cancellation and accept the same caveat.
+     */
+    func patchFileParts(localPath: String, remotePath: String, dirtyParts: [Int32], newSize: Int64, partSize: Int64?, expectedRevision: Int64?) throws 
     
     func read(path: String) throws  -> Data
     
@@ -679,6 +890,30 @@ open func delete(path: String)throws   {try rustCallWithError(FfiConverterTypeDr
 }
     
     /**
+     * Stream `remote_path` to disk at `local_path`. Progress is emitted
+     * per chunk written (precise: bytes transferred always equal bytes
+     * already on disk). Cancellation is cooperative — checked between
+     * chunks and via `tokio::select!` so a cancel while a chunk read is
+     * in flight terminates the underlying connection. A cancelled
+     * transfer surfaces as `Drive9Exception` with `code = "cancelled"`.
+     *
+     * On any failure (network error, cancellation, write error) the
+     * partial local file is deleted so callers do not mistake a partial
+     * download for the full file. Successful downloads leave the file
+     * in place.
+     */
+open func downloadFile(remotePath: String, localPath: String, progress: Drive9ProgressListener?, cancel: Drive9CancelToken?)throws   {try rustCallWithError(FfiConverterTypeDrive9Exception_lift) {
+    uniffi_drive9_mobile_core_fn_method_drive9mobileclient_download_file(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(remotePath),
+        FfiConverterString.lower(localPath),
+        FfiConverterOptionTypeDrive9ProgressListener.lower(progress),
+        FfiConverterOptionTypeDrive9CancelToken.lower(cancel),$0
+    )
+}
+}
+    
+    /**
      * Search by metadata. `params` is forwarded verbatim to `drive9-rs` so
      * URL encoding and server-side semantics stay in one place; the wrapper
      * does not interpret keys.
@@ -720,6 +955,35 @@ open func mkdir(path: String)throws   {try rustCallWithError(FfiConverterTypeDri
     uniffi_drive9_mobile_core_fn_method_drive9mobileclient_mkdir(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(path),$0
+    )
+}
+}
+    
+    /**
+     * Patch specific parts of a remote file using bytes read from
+     * `local_path`. `dirty_parts` are 1-based part numbers; the server
+     * keeps the unlisted parts. `part_size` overrides the server default
+     * when set. `new_size` is the total file size after patching.
+     *
+     * Input validation (rejected with `code = "other"`):
+     * - every `part_num >= 1`
+     * - `part_size`, if set, must be `> 0`
+     * - `new_size >= 0`
+     *
+     * Cancellation / progress are NOT supported in this iteration;
+     * dropping the call mid-patch leaves the server-side multipart upload
+     * to expire on its own. Callers that need cancel should compose with
+     * external task cancellation and accept the same caveat.
+     */
+open func patchFileParts(localPath: String, remotePath: String, dirtyParts: [Int32], newSize: Int64, partSize: Int64?, expectedRevision: Int64?)throws   {try rustCallWithError(FfiConverterTypeDrive9Exception_lift) {
+    uniffi_drive9_mobile_core_fn_method_drive9mobileclient_patch_file_parts(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(localPath),
+        FfiConverterString.lower(remotePath),
+        FfiConverterSequenceInt32.lower(dirtyParts),
+        FfiConverterInt64.lower(newSize),
+        FfiConverterOptionInt64.lower(partSize),
+        FfiConverterOptionInt64.lower(expectedRevision),$0
     )
 }
 }
@@ -824,6 +1088,220 @@ public func FfiConverterTypeDrive9MobileClient_lift(_ handle: UInt64) throws -> 
 #endif
 public func FfiConverterTypeDrive9MobileClient_lower(_ value: Drive9MobileClient) -> UInt64 {
     return FfiConverterTypeDrive9MobileClient.lower(value)
+}
+
+
+
+
+
+
+/**
+ * Foreign-implemented progress callback. UniFFI marshals this into a
+ * Kotlin interface and a Swift protocol; consumers implement
+ * `on_progress(transferred, total)`.
+ *
+ * `total` is 0 when the total size is unknown (e.g. download without a
+ * Content-Length). Implementations must be cheap; this is called per chunk
+ * during transfer.
+ */
+public protocol Drive9ProgressListener: AnyObject, Sendable {
+    
+    func onProgress(transferred: UInt64, total: UInt64) 
+    
+}
+/**
+ * Foreign-implemented progress callback. UniFFI marshals this into a
+ * Kotlin interface and a Swift protocol; consumers implement
+ * `on_progress(transferred, total)`.
+ *
+ * `total` is 0 when the total size is unknown (e.g. download without a
+ * Content-Length). Implementations must be cheap; this is called per chunk
+ * during transfer.
+ */
+open class Drive9ProgressListenerImpl: Drive9ProgressListener, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_drive9_mobile_core_fn_clone_drive9progresslistener(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_drive9_mobile_core_fn_free_drive9progresslistener(handle, $0) }
+    }
+
+    
+
+    
+open func onProgress(transferred: UInt64, total: UInt64)  {try! rustCall() {
+    uniffi_drive9_mobile_core_fn_method_drive9progresslistener_on_progress(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(transferred),
+        FfiConverterUInt64.lower(total),$0
+    )
+}
+}
+    
+
+    
+}
+
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceDrive9ProgressListener {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // Store the vtable directly.
+    static let vtable: UniffiVTableCallbackInterfaceDrive9ProgressListener = UniffiVTableCallbackInterfaceDrive9ProgressListener(
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            do {
+                try FfiConverterTypeDrive9ProgressListener.handleMap.remove(handle: uniffiHandle)
+            } catch {
+                print("Uniffi callback interface Drive9ProgressListener: handle missing in uniffiFree")
+            }
+        },
+        uniffiClone: { (uniffiHandle: UInt64) -> UInt64 in
+            do {
+                return try FfiConverterTypeDrive9ProgressListener.handleMap.clone(handle: uniffiHandle)
+            } catch {
+                fatalError("Uniffi callback interface Drive9ProgressListener: handle missing in uniffiClone")
+            }
+        },
+        onProgress: { (
+            uniffiHandle: UInt64,
+            transferred: UInt64,
+            total: UInt64,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeDrive9ProgressListener.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onProgress(
+                     transferred: try FfiConverterUInt64.lift(transferred),
+                     total: try FfiConverterUInt64.lift(total)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        }
+    )
+
+    // Rust stores this pointer for future callback invocations, so it must live
+    // for the process lifetime (not just for the init function call).
+    static let vtablePtr: UnsafePointer<UniffiVTableCallbackInterfaceDrive9ProgressListener> = {
+        let ptr = UnsafeMutablePointer<UniffiVTableCallbackInterfaceDrive9ProgressListener>.allocate(capacity: 1)
+        ptr.initialize(to: vtable)
+        return UnsafePointer(ptr)
+    }()
+}
+
+private func uniffiCallbackInitDrive9ProgressListener() {
+    uniffi_drive9_mobile_core_fn_init_callback_vtable_drive9progresslistener(UniffiCallbackInterfaceDrive9ProgressListener.vtablePtr)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDrive9ProgressListener: FfiConverter {
+    fileprivate static let handleMap = UniffiHandleMap<Drive9ProgressListener>()
+
+    typealias FfiType = UInt64
+    typealias SwiftType = Drive9ProgressListener
+
+    public static func lift(_ handle: UInt64) throws -> Drive9ProgressListener {
+        if ((handle & 1) == 0) {
+            // Rust-generated handle, construct a new class that uses the handle to implement the
+            // interface
+            return Drive9ProgressListenerImpl(unsafeFromHandle: handle)
+        } else {
+            // Swift-generated handle, get the object from the handle map
+            return try handleMap.remove(handle: handle)
+        }
+    }
+
+    public static func lower(_ value: Drive9ProgressListener) -> UInt64 {
+         if let rustImpl = value as? Drive9ProgressListenerImpl {
+             // Rust-implemented object.  Clone the handle and return it
+            return rustImpl.uniffiCloneHandle()
+         } else {
+            // Swift object, generate a new vtable handle and return that.
+            return handleMap.insert(obj: value)
+         }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Drive9ProgressListener {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: Drive9ProgressListener, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDrive9ProgressListener_lift(_ handle: UInt64) throws -> Drive9ProgressListener {
+    return try FfiConverterTypeDrive9ProgressListener.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDrive9ProgressListener_lower(_ value: Drive9ProgressListener) -> UInt64 {
+    return FfiConverterTypeDrive9ProgressListener.lower(value)
 }
 
 
@@ -1208,6 +1686,79 @@ fileprivate struct FfiConverterOptionDouble: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeDrive9CancelToken: FfiConverterRustBuffer {
+    typealias SwiftType = Drive9CancelToken?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeDrive9CancelToken.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeDrive9CancelToken.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeDrive9ProgressListener: FfiConverterRustBuffer {
+    typealias SwiftType = Drive9ProgressListener?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeDrive9ProgressListener.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeDrive9ProgressListener.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceInt32: FfiConverterRustBuffer {
+    typealias SwiftType = [Int32]
+
+    public static func write(_ value: [Int32], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterInt32.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [Int32] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [Int32]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterInt32.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
     typealias SwiftType = [String]
 
@@ -1321,10 +1872,19 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
+    if (uniffi_drive9_mobile_core_checksum_method_drive9canceltoken_cancel() != 18135) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_drive9_mobile_core_checksum_method_drive9canceltoken_is_cancelled() != 14246) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_copy() != 4600) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_delete() != 51992) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_download_file() != 2993) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_find() != 51697) {
@@ -1337,6 +1897,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_mkdir() != 42794) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_patch_file_parts() != 19558) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_read() != 41349) {
@@ -1354,10 +1917,17 @@ private let initializationResult: InitializationResult = {
     if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_write() != 10803) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_drive9_mobile_core_checksum_method_drive9progresslistener_on_progress() != 21944) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_drive9_mobile_core_checksum_constructor_drive9canceltoken_new() != 6612) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_drive9_mobile_core_checksum_constructor_drive9mobileclient_new() != 15619) {
         return InitializationResult.apiChecksumMismatch
     }
 
+    uniffiCallbackInitDrive9ProgressListener()
     return InitializationResult.ok
 }()
 

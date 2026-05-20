@@ -92,4 +92,50 @@ public final class Drive9Client: @unchecked Sendable {
             try inner.sql(query: query)
         }.value
     }
+
+    /// Stream a remote file to a local path. Progress is precise (bytes
+    /// transferred equal bytes already on disk). Cancellation is
+    /// cooperative via ``Drive9CancelToken``; on cancel or any failure the
+    /// partial local file is deleted.
+    public func downloadFile(
+        remotePath: String,
+        localPath: String,
+        progress: Drive9ProgressListener? = nil,
+        cancel: Drive9CancelToken? = nil
+    ) async throws {
+        let inner = self.inner
+        try await Task.detached(priority: .userInitiated) {
+            try inner.downloadFile(
+                remotePath: remotePath,
+                localPath: localPath,
+                progress: progress,
+                cancel: cancel
+            )
+        }.value
+    }
+
+    /// Patch specific parts of a remote file using bytes read from
+    /// `localPath`. `dirtyParts` are 1-based part numbers known to the
+    /// caller. Cancel / progress are not supported in this iteration; see
+    /// Phase 2B-2.
+    public func patchFileParts(
+        localPath: String,
+        remotePath: String,
+        dirtyParts: [Int32],
+        newSize: Int64,
+        partSize: Int64? = nil,
+        expectedRevision: Int64? = nil
+    ) async throws {
+        let inner = self.inner
+        try await Task.detached(priority: .userInitiated) {
+            try inner.patchFileParts(
+                localPath: localPath,
+                remotePath: remotePath,
+                dirtyParts: dirtyParts,
+                newSize: newSize,
+                partSize: partSize,
+                expectedRevision: expectedRevision
+            )
+        }.value
+    }
 }

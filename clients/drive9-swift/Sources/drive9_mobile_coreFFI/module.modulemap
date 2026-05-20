@@ -1,0 +1,4 @@
+module drive9_mobile_coreFFI {
+    header "drive9_mobile_coreFFI.h"
+    export *
+}

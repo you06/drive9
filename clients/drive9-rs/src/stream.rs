@@ -12,7 +12,7 @@ pub struct StreamWriter {
     total_size: i64,
     expected_revision: i64,
     state: std::sync::Arc<Mutex<StreamState>>,
-    sem: Semaphore,
+    sem: std::sync::Arc<Semaphore>,
 }
 
 struct StreamState {
@@ -48,7 +48,7 @@ impl StreamWriter {
                 aborted: false,
                 closing: false,
             })),
-            sem: Semaphore::new(UPLOAD_MAX_CONCURRENCY),
+            sem: std::sync::Arc::new(Semaphore::new(UPLOAD_MAX_CONCURRENCY)),
         }
     }
 
@@ -123,7 +123,7 @@ impl StreamWriter {
         state.inflight += 1;
         drop(state);
 
-        let permit = self.sem.acquire().await.unwrap();
+        let permit = self.sem.clone().acquire_owned().await.unwrap();
         let client = self.client.clone();
         let data = data.clone();
         let upload_id = plan.upload_id;

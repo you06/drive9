@@ -5,10 +5,25 @@ edition = "2021"
 
 [features]
 default = ["native-tls"]
-# Use the platform-native TLS stack (current desktop behavior).
-native-tls = ["reqwest/default-tls"]
-# Use rustls; mobile-friendly because it avoids OpenSSL on Android/iOS.
-rustls-tls = ["reqwest/rustls-tls"]
+# Desktop default behaviour. We have to re-state reqwest's default feature set
+# explicitly: `[dependencies]` below sets `default-features = false` so callers
+# can opt out of native-tls, which also drops charset/http2/system-proxy
+# unless re-enabled here.
+native-tls = [
+    "reqwest/default-tls",
+    "reqwest/charset",
+    "reqwest/http2",
+    "reqwest/system-proxy",
+]
+# Mobile-friendly TLS via rustls. Keep charset + http2 (mobile clients want
+# both); drop system-proxy because reqwest's system-proxy targets desktop OS
+# network settings and is the wrong thing on Android / iOS where the platform
+# handles it.
+rustls-tls = [
+    "reqwest/rustls-tls",
+    "reqwest/charset",
+    "reqwest/http2",
+]
 
 [dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream"] }

@@ -451,6 +451,22 @@ fileprivate struct FfiConverterInt64: FfiConverterPrimitive {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterDouble: FfiConverterPrimitive {
+    typealias FfiType = Double
+    typealias SwiftType = Double
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Double {
+        return try lift(readDouble(&buf))
+    }
+
+    public static func write(_ value: Double, into buf: inout [UInt8]) {
+        writeDouble(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterBool : FfiConverter {
     typealias FfiType = Int8
     typealias SwiftType = Bool
@@ -536,11 +552,37 @@ fileprivate struct FfiConverterData: FfiConverterRustBuffer {
 
 public protocol Drive9MobileClientProtocol: AnyObject, Sendable {
     
+    func copy(srcPath: String, dstPath: String) throws 
+    
     func delete(path: String) throws 
+    
+    /**
+     * Search by metadata. `params` is forwarded verbatim to `drive9-rs` so
+     * URL encoding and server-side semantics stay in one place; the wrapper
+     * does not interpret keys.
+     */
+    func find(pathPrefix: String, params: [String: String]) throws  -> [Drive9SearchResult]
+    
+    /**
+     * Search by content. `limit` of 0 (or negative) lets the server pick.
+     */
+    func grep(query: String, pathPrefix: String, limit: Int32) throws  -> [Drive9SearchResult]
     
     func list(path: String) throws  -> [Drive9FileInfo]
     
+    func mkdir(path: String) throws 
+    
     func read(path: String) throws  -> Data
+    
+    func rename(oldPath: String, newPath: String) throws 
+    
+    /**
+     * Run a SQL query. Each result row is returned as a JSON-encoded string
+     * so the FFI surface stays free of arbitrary JSON values; consumers
+     * parse with their preferred JSON library. The wrapper does not
+     * interpret column names or types.
+     */
+    func sql(query: String) throws  -> [String]
     
     func stat(path: String) throws  -> Drive9StatResult
     
@@ -619,12 +661,50 @@ public convenience init(baseUrl: String, apiKey: String) {
     
 
     
+open func copy(srcPath: String, dstPath: String)throws   {try rustCallWithError(FfiConverterTypeDrive9Exception_lift) {
+    uniffi_drive9_mobile_core_fn_method_drive9mobileclient_copy(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(srcPath),
+        FfiConverterString.lower(dstPath),$0
+    )
+}
+}
+    
 open func delete(path: String)throws   {try rustCallWithError(FfiConverterTypeDrive9Exception_lift) {
     uniffi_drive9_mobile_core_fn_method_drive9mobileclient_delete(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(path),$0
     )
 }
+}
+    
+    /**
+     * Search by metadata. `params` is forwarded verbatim to `drive9-rs` so
+     * URL encoding and server-side semantics stay in one place; the wrapper
+     * does not interpret keys.
+     */
+open func find(pathPrefix: String, params: [String: String])throws  -> [Drive9SearchResult]  {
+    return try  FfiConverterSequenceTypeDrive9SearchResult.lift(try rustCallWithError(FfiConverterTypeDrive9Exception_lift) {
+    uniffi_drive9_mobile_core_fn_method_drive9mobileclient_find(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(pathPrefix),
+        FfiConverterDictionaryStringString.lower(params),$0
+    )
+})
+}
+    
+    /**
+     * Search by content. `limit` of 0 (or negative) lets the server pick.
+     */
+open func grep(query: String, pathPrefix: String, limit: Int32)throws  -> [Drive9SearchResult]  {
+    return try  FfiConverterSequenceTypeDrive9SearchResult.lift(try rustCallWithError(FfiConverterTypeDrive9Exception_lift) {
+    uniffi_drive9_mobile_core_fn_method_drive9mobileclient_grep(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(query),
+        FfiConverterString.lower(pathPrefix),
+        FfiConverterInt32.lower(limit),$0
+    )
+})
 }
     
 open func list(path: String)throws  -> [Drive9FileInfo]  {
@@ -636,11 +716,43 @@ open func list(path: String)throws  -> [Drive9FileInfo]  {
 })
 }
     
+open func mkdir(path: String)throws   {try rustCallWithError(FfiConverterTypeDrive9Exception_lift) {
+    uniffi_drive9_mobile_core_fn_method_drive9mobileclient_mkdir(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(path),$0
+    )
+}
+}
+    
 open func read(path: String)throws  -> Data  {
     return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeDrive9Exception_lift) {
     uniffi_drive9_mobile_core_fn_method_drive9mobileclient_read(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(path),$0
+    )
+})
+}
+    
+open func rename(oldPath: String, newPath: String)throws   {try rustCallWithError(FfiConverterTypeDrive9Exception_lift) {
+    uniffi_drive9_mobile_core_fn_method_drive9mobileclient_rename(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(oldPath),
+        FfiConverterString.lower(newPath),$0
+    )
+}
+}
+    
+    /**
+     * Run a SQL query. Each result row is returned as a JSON-encoded string
+     * so the FFI surface stays free of arbitrary JSON values; consumers
+     * parse with their preferred JSON library. The wrapper does not
+     * interpret column names or types.
+     */
+open func sql(query: String)throws  -> [String]  {
+    return try  FfiConverterSequenceString.lift(try rustCallWithError(FfiConverterTypeDrive9Exception_lift) {
+    uniffi_drive9_mobile_core_fn_method_drive9mobileclient_sql(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(query),$0
     )
 })
 }
@@ -782,6 +894,74 @@ public func FfiConverterTypeDrive9FileInfo_lift(_ buf: RustBuffer) throws -> Dri
 #endif
 public func FfiConverterTypeDrive9FileInfo_lower(_ value: Drive9FileInfo) -> RustBuffer {
     return FfiConverterTypeDrive9FileInfo.lower(value)
+}
+
+
+public struct Drive9SearchResult: Equatable, Hashable {
+    public var path: String
+    public var name: String
+    public var sizeBytes: Int64
+    /**
+     * Optional search relevance score, when the server returns one.
+     */
+    public var score: Double?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(path: String, name: String, sizeBytes: Int64, 
+        /**
+         * Optional search relevance score, when the server returns one.
+         */score: Double?) {
+        self.path = path
+        self.name = name
+        self.sizeBytes = sizeBytes
+        self.score = score
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension Drive9SearchResult: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDrive9SearchResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Drive9SearchResult {
+        return
+            try Drive9SearchResult(
+                path: FfiConverterString.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf), 
+                sizeBytes: FfiConverterInt64.read(from: &buf), 
+                score: FfiConverterOptionDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: Drive9SearchResult, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.path, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterInt64.write(value.sizeBytes, into: &buf)
+        FfiConverterOptionDouble.write(value.score, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDrive9SearchResult_lift(_ buf: RustBuffer) throws -> Drive9SearchResult {
+    return try FfiConverterTypeDrive9SearchResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDrive9SearchResult_lower(_ value: Drive9SearchResult) -> RustBuffer {
+    return FfiConverterTypeDrive9SearchResult.lower(value)
 }
 
 
@@ -1004,6 +1184,55 @@ fileprivate struct FfiConverterOptionInt64: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionDouble: FfiConverterRustBuffer {
+    typealias SwiftType = Double?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterDouble.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterDouble.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
+    typealias SwiftType = [String]
+
+    public static func write(_ value: [String], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterString.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [String] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [String]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterString.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeDrive9FileInfo: FfiConverterRustBuffer {
     typealias SwiftType = [Drive9FileInfo]
 
@@ -1026,6 +1255,57 @@ fileprivate struct FfiConverterSequenceTypeDrive9FileInfo: FfiConverterRustBuffe
     }
 }
 
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeDrive9SearchResult: FfiConverterRustBuffer {
+    typealias SwiftType = [Drive9SearchResult]
+
+    public static func write(_ value: [Drive9SearchResult], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeDrive9SearchResult.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [Drive9SearchResult] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [Drive9SearchResult]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeDrive9SearchResult.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterDictionaryStringString: FfiConverterRustBuffer {
+    public static func write(_ value: [String: String], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for (key, value) in value {
+            FfiConverterString.write(key, into: &buf)
+            FfiConverterString.write(value, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [String: String] {
+        let len: Int32 = try readInt(&buf)
+        var dict = [String: String]()
+        dict.reserveCapacity(Int(len))
+        for _ in 0..<len {
+            let key = try FfiConverterString.read(from: &buf)
+            let value = try FfiConverterString.read(from: &buf)
+            dict[key] = value
+        }
+        return dict
+    }
+}
+
 private enum InitializationResult {
     case ok
     case contractVersionMismatch
@@ -1041,13 +1321,31 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
+    if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_copy() != 4600) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_delete() != 51992) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_find() != 51697) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_grep() != 11362) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_list() != 36043) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_mkdir() != 42794) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_read() != 41349) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_rename() != 5269) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_sql() != 49350) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_stat() != 14655) {

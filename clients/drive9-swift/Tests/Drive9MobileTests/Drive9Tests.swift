@@ -95,6 +95,69 @@ final class Drive9Tests: XCTestCase {
         }
     }
 
+    func testCopyRenameMkdirSucceed() async throws {
+        server.route("POST", "/v1/fs/dst.txt?copy") { _ in
+            MockResponse(status: 200, body: Data())
+        }
+        server.route("POST", "/v1/fs/new.txt?rename") { _ in
+            MockResponse(status: 200, body: Data())
+        }
+        server.route("POST", "/v1/fs/dir/?mkdir") { _ in
+            MockResponse(status: 200, body: Data())
+        }
+
+        let client = Drive9Client(baseUrl: server.baseURL, apiKey: "k")
+        try await client.copy(srcPath: "/src.txt", dstPath: "/dst.txt")
+        try await client.rename(oldPath: "/old.txt", newPath: "/new.txt")
+        try await client.mkdir(path: "/dir/")
+    }
+
+    func testGrepReturnsSearchResults() async throws {
+        server.route("GET", "/v1/fs/?grep=hello&limit=3") { _ in
+            let body = #"[{"path":"/a.txt","name":"a.txt","size_bytes":7,"score":0.5}]"#
+            return MockResponse(status: 200, body: Data(body.utf8), contentType: "application/json")
+        }
+
+        let client = Drive9Client(baseUrl: server.baseURL, apiKey: "k")
+        let hits = try await client.grep(query: "hello", pathPrefix: "/", limit: 3)
+        XCTAssertEqual(hits.count, 1)
+        XCTAssertEqual(hits[0].path, "/a.txt")
+        XCTAssertEqual(hits[0].sizeBytes, 7)
+        XCTAssertEqual(hits[0].score, 0.5)
+    }
+
+    func testFindForwardsParams() async throws {
+        // HashMap iteration order is non-deterministic; the handler matches
+        // path only and asserts each piece is present in the query string.
+        server.routeAnyQuery("GET", "/v1/fs/data/") { request in
+            XCTAssertTrue(request.query.contains("find="), "missing find=: \(request.query)")
+            XCTAssertTrue(request.query.contains("type=file"), "missing type=file: \(request.query)")
+            XCTAssertTrue(request.query.contains("limit=10"), "missing limit=10: \(request.query)")
+            let body = #"[{"path":"/data/x.txt","name":"x.txt","size_bytes":1,"score":null}]"#
+            return MockResponse(status: 200, body: Data(body.utf8), contentType: "application/json")
+        }
+
+        let client = Drive9Client(baseUrl: server.baseURL, apiKey: "k")
+        let hits = try await client.find(pathPrefix: "/data/", params: ["type": "file", "limit": "10"])
+        XCTAssertEqual(hits.count, 1)
+        XCTAssertEqual(hits[0].path, "/data/x.txt")
+    }
+
+    func testSqlReturnsJsonStrings() async throws {
+        server.route("POST", "/v1/sql") { _ in
+            let body = #"[{"path":"/a.txt","size":10},{"path":"/b","size":0}]"#
+            return MockResponse(status: 200, body: Data(body.utf8), contentType: "application/json")
+        }
+
+        let client = Drive9Client(baseUrl: server.baseURL, apiKey: "k")
+        let rows = try await client.sql(query: "SELECT path, size FROM files")
+        XCTAssertEqual(rows.count, 2)
+        // Don't assume key order; parse each row and confirm a field.
+        XCTAssertTrue(rows[0].contains("\"path\":\"/a.txt\""))
+        XCTAssertTrue(rows[0].contains("\"size\":10"))
+        XCTAssertTrue(rows[1].contains("\"path\":\"/b\""))
+    }
+
     func testStatusErrorCarriesCode() async throws {
         server.route("GET", "/v1/fs/missing.txt") { _ in
             let body = #"{"error":"forbidden"}"#

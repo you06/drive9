@@ -11,14 +11,25 @@ import Darwin
 final class MockHTTPServer: @unchecked Sendable {
     struct Request {
         let method: String
+        /// Full request target including query string.
         let path: String
+        /// Path portion only (everything before `?`).
+        let pathOnly: String
+        /// Query string (excluding the `?`).
+        let query: String
         let body: Data
     }
 
     typealias Handler = (Request) -> MockResponse
 
     private(set) var port: Int = 0
+    /// Routes keyed by "METHOD path?query" — match the full target including
+    /// query string. Used when the test cares about the exact URL.
     private var routes: [String: Handler] = [:]
+    /// Routes keyed by "METHOD pathOnly" — match any query string. Used when
+    /// HashMap-ordered query params are non-deterministic and the handler
+    /// inspects `Request.query` itself.
+    private var pathOnlyRoutes: [String: Handler] = [:]
     private var serverSocket: Int32 = -1
     private var acceptThread: Thread?
     private let lock = NSLock()
@@ -31,6 +42,14 @@ final class MockHTTPServer: @unchecked Sendable {
     func route(_ method: String, _ path: String, handler: @escaping Handler) {
         lock.lock()
         routes["\(method) \(path)"] = handler
+        lock.unlock()
+    }
+
+    /// Register a handler that matches any query string for the given method
+    /// and path. The handler can inspect `Request.query` to assert specifics.
+    func routeAnyQuery(_ method: String, _ pathOnly: String, handler: @escaping Handler) {
+        lock.lock()
+        pathOnlyRoutes["\(method) \(pathOnly)"] = handler
         lock.unlock()
     }
 
@@ -110,15 +129,16 @@ final class MockHTTPServer: @unchecked Sendable {
 
     private func handle(client: Int32) {
         guard let request = readRequest(from: client) else { return }
-        let key = "\(request.method) \(request.path)"
+        let exactKey = "\(request.method) \(request.path)"
+        let pathOnlyKey = "\(request.method) \(request.pathOnly)"
         lock.lock()
-        let handler = routes[key]
+        let handler = routes[exactKey] ?? pathOnlyRoutes[pathOnlyKey]
         lock.unlock()
         let response: MockResponse
         if let handler = handler {
             response = handler(request)
         } else {
-            response = MockResponse(status: 404, body: Data("no route for \(key)".utf8))
+            response = MockResponse(status: 404, body: Data("no route for \(exactKey)".utf8))
         }
         sendResponse(response, to: client)
     }
@@ -159,7 +179,10 @@ final class MockHTTPServer: @unchecked Sendable {
         if body.count > contentLength {
             body = body.subdata(in: 0..<contentLength)
         }
-        return Request(method: method, path: path, body: body)
+        let questionMarkIndex = path.firstIndex(of: "?")
+        let pathOnly = questionMarkIndex.map { String(path[..<$0]) } ?? path
+        let query = questionMarkIndex.map { String(path[path.index(after: $0)...]) } ?? ""
+        return Request(method: method, path: path, pathOnly: pathOnly, query: query, body: body)
     }
 
     private func sendResponse(_ response: MockResponse, to client: Int32) {

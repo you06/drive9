@@ -303,6 +303,62 @@ class Drive9Test {
     }
 
     @Test
+    fun uploadFileSmallRoundtripWithProgress() = runBlocking {
+        val received = mutableListOf<ByteArray>()
+        route("PUT", "/v1/fs/up.bin") { ex ->
+            received.add(ex.requestBody.readBytes())
+            ex.sendResponseHeaders(200, -1); ex.close()
+        }
+
+        val local = Files.createTempFile("drive9-kotlin-upload", ".bin")
+        Files.write(local, ByteArray(100) { 'x'.code.toByte() })
+        val updates = mutableListOf<Pair<Long, Long>>()
+        val listener = object : Drive9ProgressListener {
+            override fun onProgress(transferred: ULong, total: ULong) {
+                synchronized(updates) { updates.add(transferred.toLong() to total.toLong()) }
+            }
+        }
+
+        val client = Drive9Client(baseUrl, "k")
+        try {
+            client.uploadFile(local.toString(), "/up.bin", null, listener, null)
+            assertEquals(1, received.size)
+            assertContentEquals(ByteArray(100) { 'x'.code.toByte() }, received[0])
+            synchronized(updates) {
+                assertEquals(listOf(0L to 100L, 100L to 100L), updates.toList())
+            }
+        } finally {
+            local.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun uploadFileCancelBeforeReturnsCancelled() = runBlocking {
+        var putHits = 0
+        route("PUT", "/v1/fs/up-cancel.bin") { ex ->
+            putHits++
+            ex.sendResponseHeaders(200, -1); ex.close()
+        }
+
+        val local = Files.createTempFile("drive9-kotlin-upload-cancel", ".bin")
+        Files.write(local, ByteArray(100) { 'y'.code.toByte() })
+        val token = Drive9CancelToken()
+        token.cancel()
+
+        val client = Drive9Client(baseUrl, "k")
+        try {
+            val err = assertFailsWith<Drive9Exception.Drive9> {
+                client.uploadFile(local.toString(), "/up-cancel.bin", null, null, token)
+            }
+            assertEquals("cancelled", err.code)
+            assertEquals(0, putHits, "PUT should not happen when cancel is pre-set")
+        } finally {
+            local.deleteIfExists()
+            token.close()
+        }
+    }
+
+    @Test
     fun downloadFilePreservesPreexistingDestinationOnFailure() = runBlocking {
         route("HEAD", "/v1/fs/cancel.bin") { ex ->
             ex.responseHeaders.add("Content-Length", "10000")

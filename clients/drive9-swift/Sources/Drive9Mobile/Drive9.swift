@@ -93,6 +93,30 @@ public final class Drive9Client: @unchecked Sendable {
         }.value
     }
 
+    /// Stream a local file to a remote path. Progress reports come from
+    /// completed part PUTs (multipart) or the success transition of the
+    /// single PUT (small file); cancelled or failed uploads never emit
+    /// a `(total, total)` event. A cancelled upload surfaces as
+    /// `Drive9Exception` with `code = "cancelled"`.
+    public func uploadFile(
+        localPath: String,
+        remotePath: String,
+        expectedRevision: Int64? = nil,
+        progress: Drive9ProgressListener? = nil,
+        cancel: Drive9CancelToken? = nil
+    ) async throws {
+        let inner = self.inner
+        try await Task.detached(priority: .userInitiated) {
+            try inner.uploadFile(
+                localPath: localPath,
+                remotePath: remotePath,
+                expectedRevision: expectedRevision,
+                progress: progress,
+                cancel: cancel
+            )
+        }.value
+    }
+
     /// Stream a remote file to a local path. Progress is precise (bytes
     /// transferred equal bytes already on disk). Cancellation is
     /// cooperative via ``Drive9CancelToken``; on cancel or any failure the

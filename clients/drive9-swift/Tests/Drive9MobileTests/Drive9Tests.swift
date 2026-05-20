@@ -1,6 +1,22 @@
 import XCTest
 @testable import Drive9Mobile
 
+/// Test helpers: shared state across server handlers running on the
+/// MockHTTPServer thread.
+final class ReceivedBody: @unchecked Sendable {
+    private var body: Data = Data()
+    private let lock = NSLock()
+    func set(_ value: Data) { lock.lock(); body = value; lock.unlock() }
+    func get() -> Data { lock.lock(); defer { lock.unlock() }; return body }
+}
+
+final class HitCounter: @unchecked Sendable {
+    private var count = 0
+    private let lock = NSLock()
+    func bump() { lock.lock(); count += 1; lock.unlock() }
+    func get() -> Int { lock.lock(); defer { lock.unlock() }; return count }
+}
+
 /// Captures every `onProgress` callback for assertion in tests. The Rust
 /// side calls into Swift from a Tokio worker thread, so guard the buffer
 /// with a lock.
@@ -223,6 +239,66 @@ final class Drive9Tests: XCTestCase {
                 updates[i].transferred,
                 "non-monotonic progress at index \(i)"
             )
+        }
+    }
+
+    func testUploadFileSmallRoundtripWithProgress() async throws {
+        let received = ReceivedBody()
+        server.route("PUT", "/v1/fs/up.bin") { req in
+            received.set(req.body)
+            return MockResponse(status: 200, body: Data())
+        }
+
+        let local = FileManager.default.temporaryDirectory
+            .appendingPathComponent("drive9-swift-upload-\(UUID().uuidString).bin")
+        let payload = Data(repeating: UInt8(ascii: "x"), count: 100)
+        try payload.write(to: local)
+        defer { try? FileManager.default.removeItem(at: local) }
+
+        let recorder = RecordingProgressListener()
+        let client = Drive9Client(baseUrl: server.baseURL, apiKey: "k")
+        try await client.uploadFile(
+            localPath: local.path,
+            remotePath: "/up.bin",
+            progress: recorder
+        )
+
+        XCTAssertEqual(received.get(), payload)
+        let updates = recorder.snapshot()
+        XCTAssertEqual(updates.map { ($0.transferred, $0.total) }.map { "\($0)-\($1)" },
+                       ["0-100", "100-100"])
+    }
+
+    func testUploadFileCancelBeforeReturnsCancelled() async throws {
+        let putHits = HitCounter()
+        server.route("PUT", "/v1/fs/up-cancel.bin") { _ in
+            putHits.bump()
+            return MockResponse(status: 200, body: Data())
+        }
+
+        let local = FileManager.default.temporaryDirectory
+            .appendingPathComponent("drive9-swift-upload-cancel-\(UUID().uuidString).bin")
+        try Data(repeating: UInt8(ascii: "y"), count: 100).write(to: local)
+        defer { try? FileManager.default.removeItem(at: local) }
+
+        let token = Drive9CancelToken()
+        token.cancel()
+
+        let client = Drive9Client(baseUrl: server.baseURL, apiKey: "k")
+        do {
+            try await client.uploadFile(
+                localPath: local.path,
+                remotePath: "/up-cancel.bin",
+                cancel: token
+            )
+            XCTFail("expected cancellation")
+        } catch let error as Drive9Exception {
+            guard case let .Drive9(code, _, _, _) = error else {
+                XCTFail("unexpected variant: \(error)")
+                return
+            }
+            XCTAssertEqual(code, "cancelled")
+            XCTAssertEqual(putHits.get(), 0, "PUT should not happen when cancel is pre-set")
         }
     }
 

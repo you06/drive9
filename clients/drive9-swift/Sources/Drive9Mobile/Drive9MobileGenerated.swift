@@ -809,6 +809,25 @@ public protocol Drive9MobileClientProtocol: AnyObject, Sendable {
     func stat(path: String) throws  -> Drive9StatResult
     
     /**
+     * Stream `local_path` to `remote_path`. Progress is reported only
+     * from completed part uploads (multipart) or from the success
+     * transition of the single PUT (small file): a cancelled or failed
+     * upload never emits a `(total, total)` event.
+     *
+     * Cancellation:
+     * - If `cancel` is observed before [`Client::write_stream_with_hooks`]
+     * issues any HTTP request, no requests are sent.
+     * - For multipart uploads, in-flight part PUTs are allowed to drain
+     * so server-side multipart state is consistent, then
+     * `abort_upload_v2(upload_id)` is invoked before this call
+     * returns. The resulting error has `code = "cancelled"`.
+     *
+     * `expected_revision` makes the write conditional; a 409 surfaces
+     * as `code = "conflict"` with the server-reported `server_revision`.
+     */
+    func uploadFile(localPath: String, remotePath: String, expectedRevision: Int64?, progress: Drive9ProgressListener?, cancel: Drive9CancelToken?) throws 
+    
+    /**
      * Write `data` to `path`. When `expected_revision` is provided, the write
      * is conditional: a 409 Conflict surfaces as `Drive9Exception` with
      * `code = "conflict"` and `server_revision` set.
@@ -1050,6 +1069,35 @@ open func stat(path: String)throws  -> Drive9StatResult  {
         FfiConverterString.lower(path),$0
     )
 })
+}
+    
+    /**
+     * Stream `local_path` to `remote_path`. Progress is reported only
+     * from completed part uploads (multipart) or from the success
+     * transition of the single PUT (small file): a cancelled or failed
+     * upload never emits a `(total, total)` event.
+     *
+     * Cancellation:
+     * - If `cancel` is observed before [`Client::write_stream_with_hooks`]
+     * issues any HTTP request, no requests are sent.
+     * - For multipart uploads, in-flight part PUTs are allowed to drain
+     * so server-side multipart state is consistent, then
+     * `abort_upload_v2(upload_id)` is invoked before this call
+     * returns. The resulting error has `code = "cancelled"`.
+     *
+     * `expected_revision` makes the write conditional; a 409 surfaces
+     * as `code = "conflict"` with the server-reported `server_revision`.
+     */
+open func uploadFile(localPath: String, remotePath: String, expectedRevision: Int64?, progress: Drive9ProgressListener?, cancel: Drive9CancelToken?)throws   {try rustCallWithError(FfiConverterTypeDrive9Exception_lift) {
+    uniffi_drive9_mobile_core_fn_method_drive9mobileclient_upload_file(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(localPath),
+        FfiConverterString.lower(remotePath),
+        FfiConverterOptionInt64.lower(expectedRevision),
+        FfiConverterOptionTypeDrive9ProgressListener.lower(progress),
+        FfiConverterOptionTypeDrive9CancelToken.lower(cancel),$0
+    )
+}
 }
     
     /**
@@ -1934,6 +1982,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_stat() != 14655) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_upload_file() != 49235) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_write() != 10803) {

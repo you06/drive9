@@ -686,6 +686,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_stat(
     ): Short
+    external fun uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_upload_file(
+    ): Short
     external fun uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_write(
     ): Short
     external fun uniffi_drive9_mobile_core_checksum_method_drive9progresslistener_on_progress(
@@ -753,6 +755,8 @@ external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_sql(`ptr`: L
 ): RustBuffer.ByValue
 external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_stat(`ptr`: Long,`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_upload_file(`ptr`: Long,`localPath`: RustBuffer.ByValue,`remotePath`: RustBuffer.ByValue,`expectedRevision`: RustBuffer.ByValue,`progress`: RustBuffer.ByValue,`cancel`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
 external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_write(`ptr`: Long,`path`: RustBuffer.ByValue,`data`: RustBuffer.ByValue,`expectedRevision`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
 external fun uniffi_drive9_mobile_core_fn_clone_drive9progresslistener(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
@@ -922,6 +926,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_stat() != 14655.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_upload_file() != 49235.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_write() != 10803.toShort()) {
@@ -1788,6 +1795,25 @@ public interface Drive9MobileClientInterface {
     fun `stat`(`path`: kotlin.String): Drive9StatResult
     
     /**
+     * Stream `local_path` to `remote_path`. Progress is reported only
+     * from completed part uploads (multipart) or from the success
+     * transition of the single PUT (small file): a cancelled or failed
+     * upload never emits a `(total, total)` event.
+     *
+     * Cancellation:
+     * - If `cancel` is observed before [`Client::write_stream_with_hooks`]
+     * issues any HTTP request, no requests are sent.
+     * - For multipart uploads, in-flight part PUTs are allowed to drain
+     * so server-side multipart state is consistent, then
+     * `abort_upload_v2(upload_id)` is invoked before this call
+     * returns. The resulting error has `code = "cancelled"`.
+     *
+     * `expected_revision` makes the write conditional; a 409 surfaces
+     * as `code = "conflict"` with the server-reported `server_revision`.
+     */
+    fun `uploadFile`(`localPath`: kotlin.String, `remotePath`: kotlin.String, `expectedRevision`: kotlin.Long?, `progress`: Drive9ProgressListener?, `cancel`: Drive9CancelToken?)
+    
+    /**
      * Write `data` to `path`. When `expected_revision` is provided, the write
      * is conditional: a 409 Conflict surfaces as `Drive9Exception` with
      * `code = "conflict"` and `server_revision` set.
@@ -2120,6 +2146,36 @@ open class Drive9MobileClient: Disposable, AutoCloseable, Drive9MobileClientInte
     }
     )
     }
+    
+
+    
+    /**
+     * Stream `local_path` to `remote_path`. Progress is reported only
+     * from completed part uploads (multipart) or from the success
+     * transition of the single PUT (small file): a cancelled or failed
+     * upload never emits a `(total, total)` event.
+     *
+     * Cancellation:
+     * - If `cancel` is observed before [`Client::write_stream_with_hooks`]
+     * issues any HTTP request, no requests are sent.
+     * - For multipart uploads, in-flight part PUTs are allowed to drain
+     * so server-side multipart state is consistent, then
+     * `abort_upload_v2(upload_id)` is invoked before this call
+     * returns. The resulting error has `code = "cancelled"`.
+     *
+     * `expected_revision` makes the write conditional; a 409 surfaces
+     * as `code = "conflict"` with the server-reported `server_revision`.
+     */
+    @Throws(Drive9Exception::class)override fun `uploadFile`(`localPath`: kotlin.String, `remotePath`: kotlin.String, `expectedRevision`: kotlin.Long?, `progress`: Drive9ProgressListener?, `cancel`: Drive9CancelToken?)
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(Drive9Exception) { _status ->
+    UniffiLib.uniffi_drive9_mobile_core_fn_method_drive9mobileclient_upload_file(
+        it,
+        FfiConverterString.lower(`localPath`),FfiConverterString.lower(`remotePath`),FfiConverterOptionalLong.lower(`expectedRevision`),FfiConverterOptionalTypeDrive9ProgressListener.lower(`progress`),FfiConverterOptionalTypeDrive9CancelToken.lower(`cancel`),_status)
+}
+    }
+    
     
 
     

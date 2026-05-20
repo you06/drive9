@@ -78,6 +78,29 @@ public class Drive9Client(baseUrl: String, apiKey: String) {
     }
 
     /**
+     * Stream a local file to a remote path. Progress is reported from
+     * the v2 multipart path only after each individual part PUT completes
+     * (so transferred bytes never exceed real on-server bytes); the
+     * small-file single-PUT path emits `(0, total)` before the PUT and
+     * `(total, total)` after success. Cancelled or failed uploads never
+     * emit a `(total, total)` event.
+     *
+     * Cancellation via [Drive9CancelToken] is cooperative; in-flight
+     * part PUTs are allowed to drain so server-side multipart state
+     * stays consistent, then `abort_upload_v2` is invoked. A cancelled
+     * upload surfaces as [Drive9Exception.Drive9] with `code = "cancelled"`.
+     */
+    public suspend fun uploadFile(
+        localPath: String,
+        remotePath: String,
+        expectedRevision: Long? = null,
+        progress: Drive9ProgressListener? = null,
+        token: Drive9CancelToken? = null,
+    ): Unit = withContext(Dispatchers.IO) {
+        inner.uploadFile(localPath, remotePath, expectedRevision, progress, token)
+    }
+
+    /**
      * Stream a remote file to a local path. Progress is precise (bytes
      * transferred equal bytes already on disk). Cancellation is cooperative
      * via [Drive9CancelToken]; on cancel or any failure the partial local

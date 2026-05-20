@@ -228,11 +228,23 @@ impl StreamWriter {
         self.wait_inflight().await;
 
         {
-            let state = self.state.lock().await;
+            let mut state = self.state.lock().await;
             if let Some(ref e) = state.err {
                 return Err(Drive9Error::Other(format!("{}", e)));
             }
-            if !state.started || state.plan.is_none() {
+            if !state.started {
+                // One-shot stream: caller skipped `write_part` and is
+                // delivering the whole payload as the final part. Boot
+                // the v2 upload here so `complete()` becomes the single
+                // entry point for tiny streams.
+                if final_part_data.is_empty() {
+                    return Err(Drive9Error::Other(
+                        "stream writer was never started (call write_part first or pass final_part_data)".to_string(),
+                    ));
+                }
+                self.init_locked(&mut state).await?;
+            }
+            if state.plan.is_none() {
                 return Err(Drive9Error::Other(
                     "stream writer was never started".to_string(),
                 ));

@@ -166,6 +166,86 @@ async fn write_part_queued_at_permit_aborts_without_uploading() {
 }
 
 #[tokio::test]
+async fn complete_alone_with_final_data_initiates_and_finishes() {
+    // Single-part stream: caller never calls write_part; the whole
+    // payload is delivered through complete(1, data). The writer must
+    // initiate the v2 upload inside complete(), then upload that one
+    // part, then call /complete.
+    let mut server = mockito::Server::new_async().await;
+    let upload_id = "u-one-shot";
+    let _init = server
+        .mock("POST", "/v2/uploads/initiate")
+        .with_status(200)
+        .with_body(format!(
+            r#"{{"upload_id":"{u}","key":"k","part_size":{ps},"total_parts":1}}"#,
+            u = upload_id,
+            ps = PART_SIZE
+        ))
+        .expect(1)
+        .create_async()
+        .await;
+    let presign_handler = build_presign_one_handler(server.url());
+    let _presign = server
+        .mock(
+            "POST",
+            format!("/v2/uploads/{}/presign", upload_id).as_str(),
+        )
+        .with_status(200)
+        .with_body_from_request(presign_handler)
+        .expect(1)
+        .create_async()
+        .await;
+    let put_mock = server
+        .mock("PUT", "/upload/1")
+        .with_status(200)
+        .with_header("etag", "etag-1")
+        .expect(1)
+        .create_async()
+        .await;
+    let complete_mock = server
+        .mock(
+            "POST",
+            format!("/v2/uploads/{}/complete", upload_id).as_str(),
+        )
+        .with_status(200)
+        .expect(1)
+        .create_async()
+        .await;
+
+    let client = Client::new(server.url(), "k");
+    let writer = client.new_stream_writer("/one-shot.bin", PART_SIZE);
+    writer
+        .complete(1, vec![b'a'; PART_SIZE as usize])
+        .await
+        .unwrap();
+    put_mock.assert_async().await;
+    complete_mock.assert_async().await;
+}
+
+#[tokio::test]
+async fn complete_alone_without_data_still_errors_never_started() {
+    // Boundary: caller skipped write_part AND passed an empty
+    // final_part_data — there's nothing to upload, so complete must
+    // refuse without initiating.
+    let mut server = mockito::Server::new_async().await;
+    let init_mock = server
+        .mock("POST", "/v2/uploads/initiate")
+        .expect(0)
+        .create_async()
+        .await;
+    let client = Client::new(server.url(), "k");
+    let writer = client.new_stream_writer("/nothing.bin", PART_SIZE);
+    let err = writer.complete(1, Vec::new()).await.unwrap_err();
+    let msg = format!("{}", err);
+    assert!(
+        msg.contains("never started") && msg.contains("final_part_data"),
+        "want a 'never started / final_part_data' explanation, got: {}",
+        msg
+    );
+    init_mock.assert_async().await;
+}
+
+#[tokio::test]
 async fn abort_is_idempotent() {
     let mut server = mockito::Server::new_async().await;
     let upload_id = "u-idempotent";

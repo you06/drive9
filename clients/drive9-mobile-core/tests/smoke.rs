@@ -969,6 +969,142 @@ fn stream_upload_abort_after_write_calls_server_abort() {
 }
 
 #[test]
+fn stream_upload_parameter_error_keeps_upload_active() {
+    // Phase 4A review (Kaltsit): an invalid part_num (e.g. 0) is a
+    // caller bug, not a stream failure. The wrapper must NOT poison
+    // the upload to Errored after a parameter-error write_part —
+    // subsequent legitimate write_part + complete must still succeed.
+    let mut server = mockito::Server::new();
+    let upload_id = "u-stream-param";
+    let part_size: i64 = 100;
+    let _init = server
+        .mock("POST", "/v2/uploads/initiate")
+        .with_status(200)
+        .with_body(format!(
+            r#"{{"upload_id":"{}","key":"k","part_size":{},"total_parts":1}}"#,
+            upload_id, part_size
+        ))
+        .create();
+    let base = server.url();
+    let _presign = server
+        .mock(
+            "POST",
+            format!("/v2/uploads/{}/presign", upload_id).as_str(),
+        )
+        .with_status(200)
+        .with_body_from_request(move |req| {
+            let body: serde_json::Value =
+                serde_json::from_slice(req.body().unwrap()).unwrap();
+            let n = body["part_number"].as_i64().unwrap() as i32;
+            serde_json::to_vec(&serde_json::json!({
+                "number": n,
+                "url": format!("{}/upload/{}", base, n),
+                "size": part_size,
+            }))
+            .unwrap()
+        })
+        .create();
+    let put_mock = server
+        .mock("PUT", "/upload/1")
+        .with_status(200)
+        .with_header("etag", "e")
+        .expect(1)
+        .create();
+    let complete_mock = server
+        .mock(
+            "POST",
+            format!("/v2/uploads/{}/complete", upload_id).as_str(),
+        )
+        .with_status(200)
+        .expect(1)
+        .create();
+
+    let client = Drive9MobileClient::new(server.url(), "k".into());
+    let upload = client.new_stream_upload("/param.bin".into(), part_size, None);
+
+    // Parameter error: part_num must be >= 1.
+    let err = upload
+        .write_part(0, vec![b'a'; part_size as usize])
+        .unwrap_err();
+    let Drive9Exception::Drive9 { detail, .. } = err;
+    assert!(
+        detail.contains("part number must be"),
+        "want parameter error detail, got: {}",
+        detail
+    );
+
+    // Upload must NOT be poisoned — legitimate write + complete still
+    // succeed.
+    upload
+        .write_part(1, vec![b'a'; part_size as usize])
+        .unwrap();
+    upload.complete(1, Vec::new()).unwrap();
+    put_mock.assert();
+    complete_mock.assert();
+}
+
+#[test]
+fn stream_upload_complete_alone_works_for_one_part_stream() {
+    // Phase 4A review: a single-part upload should be expressible as
+    // new_stream_upload + complete(1, data), without a prior
+    // write_part. drive9-rs::StreamWriter::complete initiates the v2
+    // upload internally in this case.
+    let mut server = mockito::Server::new();
+    let upload_id = "u-stream-one-shot";
+    let part_size: i64 = 100;
+    let _init = server
+        .mock("POST", "/v2/uploads/initiate")
+        .with_status(200)
+        .with_body(format!(
+            r#"{{"upload_id":"{}","key":"k","part_size":{},"total_parts":1}}"#,
+            upload_id, part_size
+        ))
+        .expect(1)
+        .create();
+    let base = server.url();
+    let _presign = server
+        .mock(
+            "POST",
+            format!("/v2/uploads/{}/presign", upload_id).as_str(),
+        )
+        .with_status(200)
+        .with_body_from_request(move |req| {
+            let body: serde_json::Value =
+                serde_json::from_slice(req.body().unwrap()).unwrap();
+            let n = body["part_number"].as_i64().unwrap() as i32;
+            serde_json::to_vec(&serde_json::json!({
+                "number": n,
+                "url": format!("{}/upload/{}", base, n),
+                "size": part_size,
+            }))
+            .unwrap()
+        })
+        .create();
+    let put_mock = server
+        .mock("PUT", "/upload/1")
+        .with_status(200)
+        .with_header("etag", "e")
+        .expect(1)
+        .create();
+    let complete_mock = server
+        .mock(
+            "POST",
+            format!("/v2/uploads/{}/complete", upload_id).as_str(),
+        )
+        .with_status(200)
+        .expect(1)
+        .create();
+
+    let client = Drive9MobileClient::new(server.url(), "k".into());
+    let upload = client.new_stream_upload("/one-shot.bin".into(), part_size, None);
+    upload
+        .complete(1, vec![b'a'; part_size as usize])
+        .unwrap();
+    put_mock.assert();
+    complete_mock.assert();
+}
+
+#[test]
 fn stream_upload_part_error_transitions_to_errored() {
     let mut server = mockito::Server::new();
     let upload_id = "u-stream-err";

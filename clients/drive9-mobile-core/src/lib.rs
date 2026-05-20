@@ -792,12 +792,31 @@ impl Drive9StreamUpload {
     }
 
     fn observe_result(&self, result: &Result<(), Drive9Error>) {
-        if result.is_err() {
+        if let Err(e) = result {
+            // Parameter validation errors from `drive9-rs::StreamWriter`
+            // (bad part_num, duplicate part, part_num exceeds total_parts)
+            // are caller bugs the upload itself can recover from — they
+            // must NOT poison the wrapper to Errored. Only background /
+            // initiation / state-transition errors do that.
+            if Self::is_parameter_error(e) {
+                return;
+            }
             let mut s = self.state.lock().unwrap();
             if *s == StreamState::Active {
                 *s = StreamState::Errored;
             }
         }
+    }
+
+    fn is_parameter_error(err: &Drive9Error) -> bool {
+        // String-matched against the known parameter-error patterns in
+        // `drive9-rs::StreamWriter::write_part`. Brittle but localized:
+        // drive9-rs does not type these errors separately. If new
+        // parameter validations are added there, this list must follow.
+        let msg = err.to_string();
+        msg.contains("part number must be >= 1")
+            || msg.contains("already uploaded")
+            || msg.contains("exceeds total_parts")
     }
 }
 

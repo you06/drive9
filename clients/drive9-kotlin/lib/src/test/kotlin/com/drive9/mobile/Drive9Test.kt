@@ -469,6 +469,100 @@ class Drive9Test {
     }
 
     @Test
+    fun streamUploadParameterErrorKeepsUploadActive() = runBlocking {
+        val uploadId = "u-stream-param-kt"
+        val partSize = 100L
+        route("POST", "/v2/uploads/initiate") { ex ->
+            val body = """{"upload_id":"$uploadId","key":"k","part_size":$partSize,"total_parts":1}"""
+                .toByteArray(StandardCharsets.UTF_8)
+            ex.sendResponseHeaders(200, body.size.toLong())
+            ex.responseBody.write(body); ex.close()
+        }
+        server.createContext("/v2/uploads/$uploadId/presign") { ex ->
+            val req = ex.requestBody.readBytes().toString(StandardCharsets.UTF_8)
+            val partNum = Regex("\"part_number\"\\s*:\\s*(\\d+)").find(req)!!.groupValues[1].toInt()
+            val body = """{"number":$partNum,"url":"$baseUrl/upload/$partNum","size":$partSize}"""
+                .toByteArray(StandardCharsets.UTF_8)
+            ex.sendResponseHeaders(200, body.size.toLong())
+            ex.responseBody.write(body); ex.close()
+        }
+        route("PUT", "/upload/1") { ex ->
+            ex.requestBody.readBytes()
+            ex.responseHeaders.add("ETag", "e1")
+            ex.sendResponseHeaders(200, -1); ex.close()
+        }
+        var completeCalls = 0
+        route("POST", "/v2/uploads/$uploadId/complete") { ex ->
+            completeCalls++
+            ex.requestBody.readBytes()
+            ex.sendResponseHeaders(200, -1); ex.close()
+        }
+
+        val client = Drive9Client(baseUrl, "k")
+        val upload = client.newStreamUpload("/param.bin", partSize)
+        try {
+            // Parameter error: part_num must be >= 1
+            val err = assertFailsWith<Drive9Exception.Drive9> {
+                upload.writePart(0, ByteArray(partSize.toInt()) { 'a'.code.toByte() })
+            }
+            assertTrue(
+                "part number must be" in err.detail,
+                "want parameter error detail: ${err.detail}"
+            )
+            // Upload must NOT be poisoned — legitimate write + complete still succeed.
+            upload.writePart(1, ByteArray(partSize.toInt()) { 'a'.code.toByte() })
+            upload.complete(1, byteArrayOf())
+            assertEquals(1, completeCalls)
+        } finally {
+            upload.close()
+        }
+    }
+
+    @Test
+    fun streamUploadCompleteAloneWorksForOnePartStream() = runBlocking {
+        val uploadId = "u-stream-one-shot-kt"
+        val partSize = 100L
+        route("POST", "/v2/uploads/initiate") { ex ->
+            val body = """{"upload_id":"$uploadId","key":"k","part_size":$partSize,"total_parts":1}"""
+                .toByteArray(StandardCharsets.UTF_8)
+            ex.sendResponseHeaders(200, body.size.toLong())
+            ex.responseBody.write(body); ex.close()
+        }
+        server.createContext("/v2/uploads/$uploadId/presign") { ex ->
+            val req = ex.requestBody.readBytes().toString(StandardCharsets.UTF_8)
+            val partNum = Regex("\"part_number\"\\s*:\\s*(\\d+)").find(req)!!.groupValues[1].toInt()
+            val body = """{"number":$partNum,"url":"$baseUrl/upload/$partNum","size":$partSize}"""
+                .toByteArray(StandardCharsets.UTF_8)
+            ex.sendResponseHeaders(200, body.size.toLong())
+            ex.responseBody.write(body); ex.close()
+        }
+        var putHits = 0
+        route("PUT", "/upload/1") { ex ->
+            putHits++
+            ex.requestBody.readBytes()
+            ex.responseHeaders.add("ETag", "e1")
+            ex.sendResponseHeaders(200, -1); ex.close()
+        }
+        var completeCalls = 0
+        route("POST", "/v2/uploads/$uploadId/complete") { ex ->
+            completeCalls++
+            ex.requestBody.readBytes()
+            ex.sendResponseHeaders(200, -1); ex.close()
+        }
+
+        val client = Drive9Client(baseUrl, "k")
+        val upload = client.newStreamUpload("/one-shot.bin", partSize)
+        try {
+            // No prior writePart; deliver the whole payload via complete().
+            upload.complete(1, ByteArray(partSize.toInt()) { 'a'.code.toByte() })
+            assertEquals(1, putHits)
+            assertEquals(1, completeCalls)
+        } finally {
+            upload.close()
+        }
+    }
+
+    @Test
     fun streamUploadAbortIsIdempotentAndRejectsFurtherWrites() = runBlocking {
         val uploadId = "u-stream-abort-kt"
         val partSize = 100L

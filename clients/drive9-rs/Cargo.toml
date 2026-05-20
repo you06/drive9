@@ -3,8 +3,15 @@ name = "drive9"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["native-tls"]
+# Use the platform-native TLS stack (current desktop behavior).
+native-tls = ["reqwest/default-tls"]
+# Use rustls; mobile-friendly because it avoids OpenSSL on Android/iOS.
+rustls-tls = ["reqwest/rustls-tls"]
+
 [dependencies]
-reqwest = { version = "0.12", features = ["json", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "1.0"

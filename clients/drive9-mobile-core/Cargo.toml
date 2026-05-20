@@ -1,0 +1,25 @@
+[package]
+name = "drive9-mobile-core"
+version = "0.1.0"
+edition = "2021"
+description = "UniFFI wrapper for drive9 SDK exposing a small mobile-friendly API"
+
+[lib]
+name = "drive9_mobile_core"
+crate-type = ["cdylib", "staticlib", "lib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/uniffi_bindgen.rs"
+
+[features]
+default = []
+
+[dependencies]
+drive9 = { path = "../drive9-rs", default-features = false, features = ["rustls-tls"] }
+uniffi = { version = "0.31", features = ["cli"] }
+tokio = { version = "1.37", features = ["rt-multi-thread"] }
+thiserror = "1.0"
+
+[dev-dependencies]
+mockito = "1.4"

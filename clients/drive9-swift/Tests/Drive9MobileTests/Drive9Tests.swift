@@ -427,6 +427,49 @@ final class Drive9Tests: XCTestCase {
         }
     }
 
+    func testVaultListReadableSecretsHappyPath() async throws {
+        server.route("GET", "/v1/vault/read") { _ in
+            let body = #"{"secrets":["alpha","beta"]}"#
+            return MockResponse(status: 200, body: Data(body.utf8), contentType: "application/json")
+        }
+
+        let client = Drive9Client(baseUrl: server.baseURL, apiKey: "k")
+        let names = try await client.vaultListReadableSecrets()
+        XCTAssertEqual(names, ["alpha", "beta"])
+    }
+
+    func testVaultReadSecretFieldPassesJsonLookingStringThroughUntouched() async throws {
+        let raw = #"{"k":1,"nested":{"flag":true}}"#
+        server.route("GET", "/v1/vault/read/dest-config/payload") { _ in
+            MockResponse(status: 200, body: Data(raw.utf8))
+        }
+
+        let client = Drive9Client(baseUrl: server.baseURL, apiKey: "k")
+        let value = try await client.vaultReadSecretField(name: "dest-config", field: "payload")
+        XCTAssertEqual(value, raw)
+    }
+
+    func testVaultUnauthorizedSurfacesAsHttpStatus() async throws {
+        server.route("GET", "/v1/vault/read") { _ in
+            let body = #"{"error":"token expired"}"#
+            return MockResponse(status: 401, body: Data(body.utf8), contentType: "application/json")
+        }
+
+        let client = Drive9Client(baseUrl: server.baseURL, apiKey: "k")
+        do {
+            _ = try await client.vaultListReadableSecrets()
+            XCTFail("expected unauthorized error")
+        } catch let error as Drive9Exception {
+            guard case let .Drive9(code, statusCode, detail, _) = error else {
+                XCTFail("unexpected variant: \(error)")
+                return
+            }
+            XCTAssertEqual(code, "http_status")
+            XCTAssertEqual(statusCode, 401)
+            XCTAssertEqual(detail, "token expired")
+        }
+    }
+
     func testStatusErrorCarriesCode() async throws {
         server.route("GET", "/v1/fs/missing.txt") { _ in
             let body = #"{"error":"forbidden"}"#

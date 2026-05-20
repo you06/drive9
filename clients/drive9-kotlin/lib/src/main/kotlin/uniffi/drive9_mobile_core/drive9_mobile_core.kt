@@ -688,6 +688,10 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_upload_file(
     ): Short
+    external fun uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_vault_list_readable_secrets(
+    ): Short
+    external fun uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_vault_read_secret_field(
+    ): Short
     external fun uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_write(
     ): Short
     external fun uniffi_drive9_mobile_core_checksum_method_drive9progresslistener_on_progress(
@@ -757,6 +761,10 @@ external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_stat(`ptr`: 
 ): RustBuffer.ByValue
 external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_upload_file(`ptr`: Long,`localPath`: RustBuffer.ByValue,`remotePath`: RustBuffer.ByValue,`expectedRevision`: RustBuffer.ByValue,`progress`: RustBuffer.ByValue,`cancel`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
+external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_vault_list_readable_secrets(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_vault_read_secret_field(`ptr`: Long,`name`: RustBuffer.ByValue,`field`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_write(`ptr`: Long,`path`: RustBuffer.ByValue,`data`: RustBuffer.ByValue,`expectedRevision`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
 external fun uniffi_drive9_mobile_core_fn_clone_drive9progresslistener(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
@@ -929,6 +937,12 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_upload_file() != 49235.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_vault_list_readable_secrets() != 55086.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_vault_read_secret_field() != 43217.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_write() != 10803.toShort()) {
@@ -1814,6 +1828,37 @@ public interface Drive9MobileClientInterface {
     fun `uploadFile`(`localPath`: kotlin.String, `remotePath`: kotlin.String, `expectedRevision`: kotlin.Long?, `progress`: Drive9ProgressListener?, `cancel`: Drive9CancelToken?)
     
     /**
+     * List vault secrets readable by the current api_key / token.
+     *
+     * The mobile FFI surface for vault is intentionally narrow: only
+     * read paths (this method and `vault_read_secret_field`) are
+     * exposed; admin operations (create/update/delete secrets, issue/
+     * revoke tokens, audit queries) stay off the mobile surface for
+     * now. Token issuance and rotation happen elsewhere (backend) and
+     * the resulting scoped token is what the mobile client uses as
+     * `api_key`.
+     *
+     * Authorization failures (401/403) and missing-secret errors (404)
+     * surface through the existing `code = "http_status"` channel; no
+     * dedicated vault error code is introduced so foreign callers
+     * only have one branch to write.
+     */
+    fun `vaultListReadableSecrets`(): List<kotlin.String>
+    
+    /**
+     * Read a single field from a vault secret.
+     *
+     * The wrapper does NOT inspect or transform the returned value: it
+     * is whatever string drive9-rs received from the server, even if
+     * that string looks like JSON. Callers that store JSON-encoded
+     * values in vault fields must parse on their side.
+     *
+     * URL encoding for `name` and `field` is delegated to drive9-rs;
+     * the wrapper does not re-encode.
+     */
+    fun `vaultReadSecretField`(`name`: kotlin.String, `field`: kotlin.String): kotlin.String
+    
+    /**
      * Write `data` to `path`. When `expected_revision` is provided, the write
      * is conditional: a 409 Conflict surfaces as `Drive9Exception` with
      * `code = "conflict"` and `server_revision` set.
@@ -2176,6 +2221,61 @@ open class Drive9MobileClient: Disposable, AutoCloseable, Drive9MobileClientInte
 }
     }
     
+    
+
+    
+    /**
+     * List vault secrets readable by the current api_key / token.
+     *
+     * The mobile FFI surface for vault is intentionally narrow: only
+     * read paths (this method and `vault_read_secret_field`) are
+     * exposed; admin operations (create/update/delete secrets, issue/
+     * revoke tokens, audit queries) stay off the mobile surface for
+     * now. Token issuance and rotation happen elsewhere (backend) and
+     * the resulting scoped token is what the mobile client uses as
+     * `api_key`.
+     *
+     * Authorization failures (401/403) and missing-secret errors (404)
+     * surface through the existing `code = "http_status"` channel; no
+     * dedicated vault error code is introduced so foreign callers
+     * only have one branch to write.
+     */
+    @Throws(Drive9Exception::class)override fun `vaultListReadableSecrets`(): List<kotlin.String> {
+            return FfiConverterSequenceString.lift(
+    callWithHandle {
+    uniffiRustCallWithError(Drive9Exception) { _status ->
+    UniffiLib.uniffi_drive9_mobile_core_fn_method_drive9mobileclient_vault_list_readable_secrets(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Read a single field from a vault secret.
+     *
+     * The wrapper does NOT inspect or transform the returned value: it
+     * is whatever string drive9-rs received from the server, even if
+     * that string looks like JSON. Callers that store JSON-encoded
+     * values in vault fields must parse on their side.
+     *
+     * URL encoding for `name` and `field` is delegated to drive9-rs;
+     * the wrapper does not re-encode.
+     */
+    @Throws(Drive9Exception::class)override fun `vaultReadSecretField`(`name`: kotlin.String, `field`: kotlin.String): kotlin.String {
+            return FfiConverterString.lift(
+    callWithHandle {
+    uniffiRustCallWithError(Drive9Exception) { _status ->
+    UniffiLib.uniffi_drive9_mobile_core_fn_method_drive9mobileclient_vault_read_secret_field(
+        it,
+        FfiConverterString.lower(`name`),FfiConverterString.lower(`field`),_status)
+}
+    }
+    )
+    }
     
 
     

@@ -93,6 +93,29 @@ public final class Drive9Client: @unchecked Sendable {
         }.value
     }
 
+    /// List vault secret names readable by the current api key / token.
+    ///
+    /// Mobile vault surface is intentionally read-only: admin operations
+    /// (create/update/delete secret, issue/revoke token, audit) are not
+    /// exposed via FFI. Token issuance happens elsewhere; the resulting
+    /// scoped token is what the client constructor's `apiKey` carries.
+    public func vaultListReadableSecrets() async throws -> [String] {
+        let inner = self.inner
+        return try await Task.detached(priority: .userInitiated) {
+            try inner.vaultListReadableSecrets()
+        }.value
+    }
+
+    /// Read a single field from a vault secret. The value is returned
+    /// exactly as the server delivered it — JSON-looking strings are
+    /// NOT parsed or re-encoded.
+    public func vaultReadSecretField(name: String, field: String) async throws -> String {
+        let inner = self.inner
+        return try await Task.detached(priority: .userInitiated) {
+            try inner.vaultReadSecretField(name: name, field: field)
+        }.value
+    }
+
     /// Stream a local file to a remote path. Progress reports come from
     /// completed part PUTs (multipart) or the success transition of the
     /// single PUT (small file); cancelled or failed uploads never emit

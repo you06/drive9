@@ -78,6 +78,29 @@ public class Drive9Client(baseUrl: String, apiKey: String) {
     }
 
     /**
+     * List vault secret names readable by the current API key / token.
+     *
+     * Mobile vault surface is intentionally read-only: admin operations
+     * (create/update/delete secret, issue/revoke token, audit) are not
+     * exposed via FFI. Token issuance happens elsewhere; the resulting
+     * scoped token is what the client constructor's `apiKey` carries.
+     *
+     * Authorization failures and missing secrets surface through the
+     * existing [Drive9Exception.Drive9] with `code = "http_status"`
+     * and `statusCode` set to 401/403/404 as appropriate.
+     */
+    public suspend fun vaultListReadableSecrets(): List<String> =
+        withContext(Dispatchers.IO) { inner.vaultListReadableSecrets() }
+
+    /**
+     * Read a single field from a vault secret. The value is returned
+     * exactly as the server delivered it — JSON-looking strings are
+     * NOT parsed or re-encoded.
+     */
+    public suspend fun vaultReadSecretField(name: String, field: String): String =
+        withContext(Dispatchers.IO) { inner.vaultReadSecretField(name, field) }
+
+    /**
      * Stream a local file to a remote path. Progress is reported from
      * the v2 multipart path only after each individual part PUT completes
      * (so transferred bytes never exceed real on-server bytes); the

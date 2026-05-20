@@ -418,6 +418,50 @@ class Drive9Test {
     }
 
     @Test
+    fun vaultListReadableSecretsHappyPath() = runBlocking {
+        route("GET", "/v1/vault/read") { ex ->
+            val body = """{"secrets":["alpha","beta"]}""".toByteArray(StandardCharsets.UTF_8)
+            ex.responseHeaders.add("Content-Type", "application/json")
+            ex.sendResponseHeaders(200, body.size.toLong())
+            ex.responseBody.write(body); ex.close()
+        }
+
+        val client = Drive9Client(baseUrl, "k")
+        assertEquals(listOf("alpha", "beta"), client.vaultListReadableSecrets())
+    }
+
+    @Test
+    fun vaultReadSecretFieldPassesJsonLookingStringThroughUntouched() = runBlocking {
+        val raw = """{"k":1,"nested":{"flag":true}}"""
+        route("GET", "/v1/vault/read/dest-config/payload") { ex ->
+            val body = raw.toByteArray(StandardCharsets.UTF_8)
+            ex.sendResponseHeaders(200, body.size.toLong())
+            ex.responseBody.write(body); ex.close()
+        }
+
+        val client = Drive9Client(baseUrl, "k")
+        assertEquals(raw, client.vaultReadSecretField("dest-config", "payload"))
+    }
+
+    @Test
+    fun vaultUnauthorizedSurfacesAsHttpStatus() = runBlocking {
+        route("GET", "/v1/vault/read") { ex ->
+            val body = """{"error":"token expired"}""".toByteArray(StandardCharsets.UTF_8)
+            ex.responseHeaders.add("Content-Type", "application/json")
+            ex.sendResponseHeaders(401, body.size.toLong())
+            ex.responseBody.write(body); ex.close()
+        }
+
+        val client = Drive9Client(baseUrl, "k")
+        val err = assertFailsWith<Drive9Exception.Drive9> {
+            client.vaultListReadableSecrets()
+        }
+        assertEquals("http_status", err.code)
+        assertEquals(401, err.statusCode)
+        assertEquals("token expired", err.detail)
+    }
+
+    @Test
     fun statusErrorCarriesCode() = runBlocking {
         route("GET", "/v1/fs/missing.txt") { ex ->
             val body = """{"error":"forbidden"}""".toByteArray(StandardCharsets.UTF_8)

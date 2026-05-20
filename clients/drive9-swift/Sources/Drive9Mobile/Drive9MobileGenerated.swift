@@ -828,6 +828,37 @@ public protocol Drive9MobileClientProtocol: AnyObject, Sendable {
     func uploadFile(localPath: String, remotePath: String, expectedRevision: Int64?, progress: Drive9ProgressListener?, cancel: Drive9CancelToken?) throws 
     
     /**
+     * List vault secrets readable by the current api_key / token.
+     *
+     * The mobile FFI surface for vault is intentionally narrow: only
+     * read paths (this method and `vault_read_secret_field`) are
+     * exposed; admin operations (create/update/delete secrets, issue/
+     * revoke tokens, audit queries) stay off the mobile surface for
+     * now. Token issuance and rotation happen elsewhere (backend) and
+     * the resulting scoped token is what the mobile client uses as
+     * `api_key`.
+     *
+     * Authorization failures (401/403) and missing-secret errors (404)
+     * surface through the existing `code = "http_status"` channel; no
+     * dedicated vault error code is introduced so foreign callers
+     * only have one branch to write.
+     */
+    func vaultListReadableSecrets() throws  -> [String]
+    
+    /**
+     * Read a single field from a vault secret.
+     *
+     * The wrapper does NOT inspect or transform the returned value: it
+     * is whatever string drive9-rs received from the server, even if
+     * that string looks like JSON. Callers that store JSON-encoded
+     * values in vault fields must parse on their side.
+     *
+     * URL encoding for `name` and `field` is delegated to drive9-rs;
+     * the wrapper does not re-encode.
+     */
+    func vaultReadSecretField(name: String, field: String) throws  -> String
+    
+    /**
      * Write `data` to `path`. When `expected_revision` is provided, the write
      * is conditional: a 409 Conflict surfaces as `Drive9Exception` with
      * `code = "conflict"` and `server_revision` set.
@@ -1098,6 +1129,51 @@ open func uploadFile(localPath: String, remotePath: String, expectedRevision: In
         FfiConverterOptionTypeDrive9CancelToken.lower(cancel),$0
     )
 }
+}
+    
+    /**
+     * List vault secrets readable by the current api_key / token.
+     *
+     * The mobile FFI surface for vault is intentionally narrow: only
+     * read paths (this method and `vault_read_secret_field`) are
+     * exposed; admin operations (create/update/delete secrets, issue/
+     * revoke tokens, audit queries) stay off the mobile surface for
+     * now. Token issuance and rotation happen elsewhere (backend) and
+     * the resulting scoped token is what the mobile client uses as
+     * `api_key`.
+     *
+     * Authorization failures (401/403) and missing-secret errors (404)
+     * surface through the existing `code = "http_status"` channel; no
+     * dedicated vault error code is introduced so foreign callers
+     * only have one branch to write.
+     */
+open func vaultListReadableSecrets()throws  -> [String]  {
+    return try  FfiConverterSequenceString.lift(try rustCallWithError(FfiConverterTypeDrive9Exception_lift) {
+    uniffi_drive9_mobile_core_fn_method_drive9mobileclient_vault_list_readable_secrets(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+    
+    /**
+     * Read a single field from a vault secret.
+     *
+     * The wrapper does NOT inspect or transform the returned value: it
+     * is whatever string drive9-rs received from the server, even if
+     * that string looks like JSON. Callers that store JSON-encoded
+     * values in vault fields must parse on their side.
+     *
+     * URL encoding for `name` and `field` is delegated to drive9-rs;
+     * the wrapper does not re-encode.
+     */
+open func vaultReadSecretField(name: String, field: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeDrive9Exception_lift) {
+    uniffi_drive9_mobile_core_fn_method_drive9mobileclient_vault_read_secret_field(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(name),
+        FfiConverterString.lower(field),$0
+    )
+})
 }
     
     /**
@@ -1985,6 +2061,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_upload_file() != 49235) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_vault_list_readable_secrets() != 55086) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_vault_read_secret_field() != 43217) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_write() != 10803) {

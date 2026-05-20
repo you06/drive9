@@ -124,6 +124,48 @@ impl StreamWriter {
         drop(state);
 
         let permit = self.sem.clone().acquire_owned().await.unwrap();
+
+        // Re-check state under lock: a concurrent `complete()` / `abort()`
+        // (or a sibling part task's error) may have closed the stream out
+        // from under us while we were waiting on the semaphore permit. If
+        // so, honor that — drop the permit, decrement inflight, and
+        // surface a specific reason so callers can distinguish closing
+        // vs aborted vs completed vs an existing background error
+        // instead of seeing a generic "closed" message.
+        {
+            let mut s = self.state.lock().await;
+            if let Some(ref e) = s.err {
+                let detail = format!("background upload error: {}", e);
+                s.inflight -= 1;
+                drop(permit);
+                return Err(Drive9Error::Other(detail));
+            }
+            if s.aborted {
+                s.inflight -= 1;
+                drop(permit);
+                return Err(Drive9Error::Other(
+                    "stream writer was aborted while write_part was queued"
+                        .to_string(),
+                ));
+            }
+            if s.completed {
+                s.inflight -= 1;
+                drop(permit);
+                return Err(Drive9Error::Other(
+                    "stream writer was completed while write_part was queued"
+                        .to_string(),
+                ));
+            }
+            if s.closing {
+                s.inflight -= 1;
+                drop(permit);
+                return Err(Drive9Error::Other(
+                    "stream writer is closing while write_part was queued"
+                        .to_string(),
+                ));
+            }
+        }
+
         let client = self.client.clone();
         let data = data.clone();
         let upload_id = plan.upload_id;

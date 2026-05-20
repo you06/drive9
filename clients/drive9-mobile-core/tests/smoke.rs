@@ -3,6 +3,8 @@
 //! callers see, so they catch regressions in error mapping and runtime usage
 //! without needing the Kotlin / Swift toolchain.
 
+use std::collections::HashMap;
+
 use drive9_mobile_core::{Drive9Exception, Drive9MobileClient};
 
 #[test]
@@ -97,6 +99,119 @@ fn conflict_preserves_server_revision() {
     assert_eq!(code, "conflict");
     assert_eq!(status_code, Some(409));
     assert_eq!(server_revision, Some(12));
+}
+
+#[test]
+fn copy_rename_mkdir_succeed() {
+    let mut server = mockito::Server::new();
+    let _copy = server
+        .mock("POST", "/v1/fs/dst.txt?copy")
+        .match_header("X-Dat9-Copy-Source", "/src.txt")
+        .with_status(200)
+        .create();
+    let _rename = server
+        .mock("POST", "/v1/fs/new.txt?rename")
+        .match_header("X-Dat9-Rename-Source", "/old.txt")
+        .with_status(200)
+        .create();
+    let _mkdir = server
+        .mock("POST", "/v1/fs/dir/?mkdir")
+        .with_status(200)
+        .create();
+
+    let client = Drive9MobileClient::new(server.url(), "k".into());
+    client.copy("/src.txt".into(), "/dst.txt".into()).unwrap();
+    client.rename("/old.txt".into(), "/new.txt".into()).unwrap();
+    client.mkdir("/dir/".into()).unwrap();
+}
+
+#[test]
+fn grep_returns_search_results() {
+    let mut server = mockito::Server::new();
+    let _m = server
+        .mock("GET", "/v1/fs/?grep=needle&limit=5")
+        .with_status(200)
+        .with_body(
+            r#"[{"path":"/a.txt","name":"a.txt","size_bytes":10,"score":0.9},{"path":"/b.txt","name":"b.txt","size_bytes":20,"score":null}]"#,
+        )
+        .create();
+
+    let client = Drive9MobileClient::new(server.url(), "k".into());
+    let results = client.grep("needle".into(), "/".into(), 5).unwrap();
+    assert_eq!(results.len(), 2);
+    assert_eq!(results[0].path, "/a.txt");
+    assert_eq!(results[0].size_bytes, 10);
+    assert_eq!(results[0].score, Some(0.9));
+    assert_eq!(results[1].score, None);
+}
+
+#[test]
+fn find_forwards_params_to_drive9_rs() {
+    let mut server = mockito::Server::new();
+    // drive9-rs's find() URL-encodes via urlencoding and concatenates params
+    // from a HashMap, so query-parameter order is non-deterministic. Match
+    // each piece independently to verify the wrapper passes them through.
+    let _m = server
+        .mock("GET", "/v1/fs/data/")
+        .match_query(mockito::Matcher::AllOf(vec![
+            mockito::Matcher::Regex("find=".to_string()),
+            mockito::Matcher::Regex("type=file".to_string()),
+            mockito::Matcher::Regex("limit=10".to_string()),
+        ]))
+        .with_status(200)
+        .with_body(
+            r#"[{"path":"/data/x.txt","name":"x.txt","size_bytes":1,"score":null}]"#,
+        )
+        .create();
+
+    let client = Drive9MobileClient::new(server.url(), "k".into());
+    let mut params = HashMap::new();
+    params.insert("type".into(), "file".into());
+    params.insert("limit".into(), "10".into());
+    let results = client.find("/data/".into(), params).unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].path, "/data/x.txt");
+}
+
+#[test]
+fn find_handles_empty_params() {
+    let mut server = mockito::Server::new();
+    let _m = server
+        .mock("GET", "/v1/fs/data/?find=")
+        .with_status(200)
+        .with_body("[]")
+        .create();
+
+    let client = Drive9MobileClient::new(server.url(), "k".into());
+    let results = client.find("/data/".into(), HashMap::new()).unwrap();
+    assert!(results.is_empty());
+}
+
+#[test]
+fn sql_returns_rows_as_json_strings() {
+    let mut server = mockito::Server::new();
+    let _m = server
+        .mock("POST", "/v1/sql")
+        .with_status(200)
+        .with_body(
+            r#"[{"path":"/a.txt","size":10,"is_dir":false},{"path":"/b","size":0,"is_dir":true}]"#,
+        )
+        .create();
+
+    let client = Drive9MobileClient::new(server.url(), "k".into());
+    let rows = client.sql("SELECT path, size, is_dir FROM files".into()).unwrap();
+    assert_eq!(rows.len(), 2);
+    // Each row is a JSON string; key order in serde_json::Value::to_string is
+    // insertion-stable on serde_json's preserve_order config — drive9-rs does
+    // not enable that, so we parse and compare structurally instead of by
+    // string equality.
+    let row0: serde_json::Value = serde_json::from_str(&rows[0]).unwrap();
+    assert_eq!(row0["path"], "/a.txt");
+    assert_eq!(row0["size"], 10);
+    assert_eq!(row0["is_dir"], false);
+    let row1: serde_json::Value = serde_json::from_str(&rows[1]).unwrap();
+    assert_eq!(row1["path"], "/b");
+    assert_eq!(row1["is_dir"], true);
 }
 
 #[test]

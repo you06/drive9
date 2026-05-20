@@ -6,9 +6,10 @@
 //! runtime; all calls block the calling thread on that runtime. Higher-level
 //! Kotlin / Swift facades wrap these calls in their idiomatic async APIs.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
-use drive9::{Client, Drive9Error, FileInfo, StatResult};
+use drive9::{Client, Drive9Error, FileInfo, SearchResult, StatResult};
 use tokio::runtime::{Builder, Runtime};
 
 uniffi::setup_scaffolding!();
@@ -125,6 +126,26 @@ impl From<StatResult> for Drive9StatResult {
     }
 }
 
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct Drive9SearchResult {
+    pub path: String,
+    pub name: String,
+    pub size_bytes: i64,
+    /// Optional search relevance score, when the server returns one.
+    pub score: Option<f64>,
+}
+
+impl From<SearchResult> for Drive9SearchResult {
+    fn from(r: SearchResult) -> Self {
+        Self {
+            path: r.path,
+            name: r.name,
+            size_bytes: r.size_bytes,
+            score: r.score,
+        }
+    }
+}
+
 #[derive(uniffi::Object)]
 pub struct Drive9MobileClient {
     inner: Client,
@@ -187,5 +208,58 @@ impl Drive9MobileClient {
     pub fn delete(&self, path: String) -> Drive9Result<()> {
         self.rt.block_on(self.inner.delete(&path))?;
         Ok(())
+    }
+
+    pub fn copy(&self, src_path: String, dst_path: String) -> Drive9Result<()> {
+        self.rt
+            .block_on(self.inner.copy(&src_path, &dst_path))?;
+        Ok(())
+    }
+
+    pub fn rename(&self, old_path: String, new_path: String) -> Drive9Result<()> {
+        self.rt
+            .block_on(self.inner.rename(&old_path, &new_path))?;
+        Ok(())
+    }
+
+    pub fn mkdir(&self, path: String) -> Drive9Result<()> {
+        self.rt.block_on(self.inner.mkdir(&path))?;
+        Ok(())
+    }
+
+    /// Search by content. `limit` of 0 (or negative) lets the server pick.
+    pub fn grep(
+        &self,
+        query: String,
+        path_prefix: String,
+        limit: i32,
+    ) -> Drive9Result<Vec<Drive9SearchResult>> {
+        let results = self
+            .rt
+            .block_on(self.inner.grep(&query, &path_prefix, limit))?;
+        Ok(results.into_iter().map(Into::into).collect())
+    }
+
+    /// Search by metadata. `params` is forwarded verbatim to `drive9-rs` so
+    /// URL encoding and server-side semantics stay in one place; the wrapper
+    /// does not interpret keys.
+    pub fn find(
+        &self,
+        path_prefix: String,
+        params: HashMap<String, String>,
+    ) -> Drive9Result<Vec<Drive9SearchResult>> {
+        let results = self
+            .rt
+            .block_on(self.inner.find(&path_prefix, &params))?;
+        Ok(results.into_iter().map(Into::into).collect())
+    }
+
+    /// Run a SQL query. Each result row is returned as a JSON-encoded string
+    /// so the FFI surface stays free of arbitrary JSON values; consumers
+    /// parse with their preferred JSON library. The wrapper does not
+    /// interpret column names or types.
+    pub fn sql(&self, query: String) -> Drive9Result<Vec<String>> {
+        let rows = self.rt.block_on(self.inner.sql(&query))?;
+        Ok(rows.into_iter().map(|v| v.to_string()).collect())
     }
 }

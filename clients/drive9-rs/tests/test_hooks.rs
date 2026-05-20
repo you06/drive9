@@ -134,7 +134,19 @@ async fn multipart_cancel_before_initiate_skips_all_requests() {
 }
 
 #[tokio::test]
-async fn multipart_cancel_between_parts_calls_abort_and_returns_cancelled() {
+async fn multipart_cancel_after_initiate_calls_abort_and_returns_cancelled() {
+    // Initiate succeeds; the presign-batch handler synchronously flips
+    // the cancel flag, so by the time the spawned part tasks reach
+    // their pre-PUT cancel check they all see true and return
+    // Drive9Error::Cancelled without issuing their PUTs. The wrapper
+    // then calls abort_upload_v2 and returns Drive9Error::Cancelled.
+    //
+    // Triggering cancel here (rather than from inside a part's PUT
+    // handler) avoids racing the parallel part tasks: under the
+    // "cancel only takes effect at part start / before-progress
+    // callback" cutoff, a cancel fired from inside a PUT body can land
+    // too late for sibling tasks that already passed their pre-PUT
+    // check, and that race was what made the original test flaky.
     let mut server = mockito::Server::new_async().await;
     let upload_id = "upload-1";
     let part_size = 5_000i64;
@@ -151,40 +163,32 @@ async fn multipart_cancel_between_parts_calls_abort_and_returns_cancelled() {
         .create_async()
         .await;
 
+    let cancel = Arc::new(FlagCancel::default());
+    let cancel_for_handler = Arc::clone(&cancel);
     let presign_url = format!("{}/v2/uploads/{}/part", server.url(), upload_id);
     let _presign = server
         .mock("POST", format!("/v2/uploads/{}/presign-batch", upload_id).as_str())
         .with_status(200)
-        .with_body(format!(
-            r#"{{"parts":[{{"number":1,"url":"{u}/1","size":{ps}}},{{"number":2,"url":"{u}/2","size":{ps}}}]}}"#,
-            u = presign_url,
-            ps = part_size
-        ))
-        .create_async()
-        .await;
-
-    // The cancel future flips the flag after the first part is uploaded.
-    let cancel = Arc::new(FlagCancel::default());
-    let cancel_for_handler = Arc::clone(&cancel);
-
-    let _put1 = server
-        .mock("PUT", format!("/v2/uploads/{}/part/1", upload_id).as_str())
-        .with_status(200)
-        .with_header("etag", "etag-1")
         .with_body_from_request(move |_req| {
-            // Trigger cancel as soon as part 1 has been delivered to the
-            // server; part 2 should now be short-circuited.
             cancel_for_handler.cancel();
-            Vec::new()
+            format!(
+                r#"{{"parts":[{{"number":1,"url":"{u}/1","size":{ps}}},{{"number":2,"url":"{u}/2","size":{ps}}}]}}"#,
+                u = presign_url,
+                ps = part_size,
+            )
+            .into_bytes()
         })
         .create_async()
         .await;
 
+    let put1 = server
+        .mock("PUT", format!("/v2/uploads/{}/part/1", upload_id).as_str())
+        .expect(0)
+        .create_async()
+        .await;
     let put2 = server
         .mock("PUT", format!("/v2/uploads/{}/part/2", upload_id).as_str())
-        .with_status(200)
-        .with_header("etag", "etag-2")
-        .expect_at_most(1)
+        .expect(0)
         .create_async()
         .await;
 
@@ -206,7 +210,7 @@ async fn multipart_cancel_between_parts_calls_abort_and_returns_cancelled() {
     let reader: Box<dyn SeekableReader> = Box::new(Cursor::new(vec![b'a'; total as usize]));
     let err = client
         .write_stream_with_hooks(
-            "/cancel-between.bin",
+            "/cancel-after-initiate.bin",
             reader,
             total,
             -1,
@@ -219,10 +223,13 @@ async fn multipart_cancel_between_parts_calls_abort_and_returns_cancelled() {
 
     abort_mock.assert_async().await;
     complete_mock.assert_async().await;
+    put1.assert_async().await;
     put2.assert_async().await;
 
-    // Progress should NOT have reported `(total, total)` — at most the
-    // first part's bytes (and only if it raced ahead of the cancel).
+    // The initial (0, total) event may have already fired right after
+    // initiate, before presign-batch handed back the (now cancelled)
+    // part plan. What must NOT happen on cancel is a (total, total)
+    // event.
     let updates = progress.updates.lock().unwrap().clone();
     for (transferred, t) in &updates {
         assert!(
@@ -365,6 +372,104 @@ async fn v1_fallback_respects_cancel_before_parts() {
         .unwrap_err();
     assert!(matches!(err, Drive9Error::Cancelled), "got: {:?}", err);
     put_mock.assert_async().await;
+}
+
+/// Progress listener that flips a cancel token the moment it observes
+/// `transferred == total`. Used to test the "late cancel from within
+/// progress callback does not flip a successful upload to Cancelled"
+/// invariant.
+struct CancelOnComplete {
+    cancel: Arc<FlagCancel>,
+    saw_complete: AtomicBool,
+}
+
+impl UploadProgress for CancelOnComplete {
+    fn on_progress(&self, transferred: u64, total: u64) {
+        if total > 0 && transferred == total {
+            self.saw_complete.store(true, Ordering::SeqCst);
+            self.cancel.cancel();
+        }
+    }
+}
+
+#[tokio::test]
+async fn multipart_late_cancel_after_final_progress_does_not_flip_to_cancelled() {
+    // Server: v2 multipart, single part = the whole file. Once the last
+    // (only) part PUT lands, the wrapper emits (total, total). The
+    // progress listener fires `cancel.cancel()` at that point. The
+    // wrapper must still call /complete and return Ok — not abort and
+    // return Cancelled.
+    let mut server = mockito::Server::new_async().await;
+    let upload_id = "u-late-cancel";
+    let part_size = 5_000i64;
+    let total = 5_000i64;
+    let _init = server
+        .mock("POST", "/v2/uploads/initiate")
+        .with_status(200)
+        .with_body(format!(
+            r#"{{"upload_id":"{}","key":"k","part_size":{},"total_parts":1}}"#,
+            upload_id, part_size
+        ))
+        .create_async()
+        .await;
+    let presign_url = format!("{}/v2/uploads/{}/part/1", server.url(), upload_id);
+    let _ps = server
+        .mock("POST", format!("/v2/uploads/{}/presign-batch", upload_id).as_str())
+        .with_status(200)
+        .with_body(format!(
+            r#"{{"parts":[{{"number":1,"url":"{}","size":{}}}]}}"#,
+            presign_url, part_size
+        ))
+        .create_async()
+        .await;
+    let put_mock = server
+        .mock("PUT", format!("/v2/uploads/{}/part/1", upload_id).as_str())
+        .with_status(200)
+        .with_header("etag", "e1")
+        .expect(1)
+        .create_async()
+        .await;
+    let complete_mock = server
+        .mock("POST", format!("/v2/uploads/{}/complete", upload_id).as_str())
+        .with_status(200)
+        .expect(1)
+        .create_async()
+        .await;
+    let abort_mock = server
+        .mock("POST", format!("/v2/uploads/{}/abort", upload_id).as_str())
+        .expect(0)
+        .create_async()
+        .await;
+
+    let cancel = Arc::new(FlagCancel::default());
+    let listener = Arc::new(CancelOnComplete {
+        cancel: Arc::clone(&cancel),
+        saw_complete: AtomicBool::new(false),
+    });
+
+    let client = Client::new(server.url(), "k").with_small_file_threshold(1);
+    let reader: Box<dyn SeekableReader> = Box::new(Cursor::new(vec![b'a'; total as usize]));
+    client
+        .write_stream_with_hooks(
+            "/late-cancel.bin",
+            reader,
+            total,
+            -1,
+            Some(listener.clone() as Arc<dyn UploadProgress>),
+            Some(cancel.clone() as Arc<dyn CancelSignal>),
+        )
+        .await
+        .expect("upload should succeed despite the late cancel triggered from progress callback");
+
+    put_mock.assert_async().await;
+    complete_mock.assert_async().await;
+    abort_mock.assert_async().await;
+
+    assert!(
+        listener.saw_complete.load(Ordering::SeqCst),
+        "listener should have seen the final (total, total) event"
+    );
+    assert!(cancel.is_cancelled(), "listener should have fired cancel");
 }
 
 #[tokio::test]

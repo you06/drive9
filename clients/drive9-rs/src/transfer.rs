@@ -270,16 +270,20 @@ impl Client {
             p.on_progress(0, total);
         }
 
-        let parts_result = self
+        // Same cutoff as v2: a late cancel (after every part already
+        // uploaded successfully and emitted progress) does not flip the
+        // result to Cancelled. We only honour cancel that a part task
+        // itself observed and returned through `Drive9Error::Cancelled`.
+        // v1 has no server abort endpoint, so the cancel branch just
+        // returns without further cleanup; documented as best-effort.
+        match self
             .upload_parts_v1_with_hooks(&plan, reader, total, progress.clone(), cancel.clone())
-            .await;
-
-        let cancelled = cancel.as_ref().map(|c| c.is_cancelled()).unwrap_or(false);
-        if cancelled {
-            return Err(Drive9Error::Cancelled);
+            .await
+        {
+            Ok(()) => self.complete_upload(&plan.upload_id).await,
+            Err(Drive9Error::Cancelled) => Err(Drive9Error::Cancelled),
+            Err(e) => Err(e),
         }
-        parts_result?;
-        self.complete_upload(&plan.upload_id).await
     }
 
     async fn upload_parts_v1_with_hooks(
@@ -425,31 +429,32 @@ impl Client {
             .upload_parts_v2_with_hooks(&plan, reader, total, progress.clone(), cancel.clone())
             .await;
 
-        // If cancel was observed at any point, treat the whole upload as
-        // cancelled and clean up server-side multipart state. We do this
-        // even when upload_parts_v2_with_hooks returned Ok, because a
-        // race between the last part completing and the cancel signal
-        // arriving should still produce a Cancelled outcome to the
-        // caller.
-        let cancelled = cancel.as_ref().map(|c| c.is_cancelled()).unwrap_or(false);
-        if cancelled {
-            let _ = self.abort_upload_v2(&upload_id).await;
-            return Err(Drive9Error::Cancelled);
-        }
-
-        let parts = match parts_result {
-            Ok(p) => p,
+        // Only escalate to Cancelled when a part task itself observed
+        // cancel (and therefore returned Drive9Error::Cancelled). Once
+        // every part has succeeded — including emitting the final
+        // (total, total) progress event — a late `cancel.cancel()` call
+        // (e.g. fired from inside the progress listener that just saw
+        // the final event) must NOT flip the result to Cancelled: that
+        // would contradict the "cancelled / failed uploads never emit a
+        // completed progress event" semantic the listener already
+        // observed.
+        match parts_result {
+            Ok(parts) => {
+                if let Err(e) = self.complete_upload_v2(&upload_id, &parts).await {
+                    let _ = self.abort_upload_v2(&upload_id).await;
+                    return Err(e);
+                }
+                Ok(())
+            }
+            Err(Drive9Error::Cancelled) => {
+                let _ = self.abort_upload_v2(&upload_id).await;
+                Err(Drive9Error::Cancelled)
+            }
             Err(e) => {
                 let _ = self.abort_upload_v2(&upload_id).await;
-                return Err(e);
+                Err(e)
             }
-        };
-
-        if let Err(e) = self.complete_upload_v2(&upload_id, &parts).await {
-            let _ = self.abort_upload_v2(&upload_id).await;
-            return Err(e);
         }
-        Ok(())
     }
 
     async fn upload_parts_v2_with_hooks(

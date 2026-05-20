@@ -2,6 +2,8 @@
 /.gradle/
 /build/
 /lib/build/
+/.kotlin/
+/lib/.kotlin/
 
 # IntelliJ / IDE caches
 /*.iml

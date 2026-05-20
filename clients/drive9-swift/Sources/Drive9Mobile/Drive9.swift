@@ -123,7 +123,7 @@ public final class Drive9Client: @unchecked Sendable {
         remotePath: String,
         dirtyParts: [Int32],
         newSize: Int64,
-        partSize: Int64? = nil,
+        partSize: Int64,
         expectedRevision: Int64? = nil
     ) async throws {
         let inner = self.inner

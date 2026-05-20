@@ -742,10 +742,12 @@ public protocol Drive9MobileClientProtocol: AnyObject, Sendable {
      * in flight terminates the underlying connection. A cancelled
      * transfer surfaces as `Drive9Exception` with `code = "cancelled"`.
      *
-     * On any failure (network error, cancellation, write error) the
-     * partial local file is deleted so callers do not mistake a partial
-     * download for the full file. Successful downloads leave the file
-     * in place.
+     * Download writes to a sibling temp file (`.{name}.drive9-tmp-{nonce}`)
+     * inside the parent directory of `local_path`. On success the temp
+     * file is renamed onto `local_path` (atomic on Unix when both paths
+     * share a filesystem). On any failure — network error, cancel, write
+     * error — only the temp file is removed; any pre-existing file at
+     * `local_path` is left untouched.
      */
     func downloadFile(remotePath: String, localPath: String, progress: Drive9ProgressListener?, cancel: Drive9CancelToken?) throws 
     
@@ -768,20 +770,29 @@ public protocol Drive9MobileClientProtocol: AnyObject, Sendable {
     /**
      * Patch specific parts of a remote file using bytes read from
      * `local_path`. `dirty_parts` are 1-based part numbers; the server
-     * keeps the unlisted parts. `part_size` overrides the server default
-     * when set. `new_size` is the total file size after patching.
+     * keeps the unlisted parts. `part_size` is the part size the caller
+     * used to compute `dirty_parts` and is also sent to the server so
+     * the upload plan uses the same chunking. `new_size` is the total
+     * file size after patching.
      *
-     * Input validation (rejected with `code = "other"`):
+     * Input validation (rejected with `code = "other"`, before any HTTP
+     * request goes out):
      * - every `part_num >= 1`
-     * - `part_size`, if set, must be `> 0`
+     * - `part_size > 0`
      * - `new_size >= 0`
+     *
+     * `part_size` is required (not Optional) because the closure has to
+     * compute file offsets as `(part_num - 1) * part_size`; the
+     * per-part size returned by the upload plan can be smaller than
+     * `part_size` for the final short part and is the wrong value to use
+     * for offset arithmetic.
      *
      * Cancellation / progress are NOT supported in this iteration;
      * dropping the call mid-patch leaves the server-side multipart upload
      * to expire on its own. Callers that need cancel should compose with
      * external task cancellation and accept the same caveat.
      */
-    func patchFileParts(localPath: String, remotePath: String, dirtyParts: [Int32], newSize: Int64, partSize: Int64?, expectedRevision: Int64?) throws 
+    func patchFileParts(localPath: String, remotePath: String, dirtyParts: [Int32], newSize: Int64, partSize: Int64, expectedRevision: Int64?) throws 
     
     func read(path: String) throws  -> Data
     
@@ -897,10 +908,12 @@ open func delete(path: String)throws   {try rustCallWithError(FfiConverterTypeDr
      * in flight terminates the underlying connection. A cancelled
      * transfer surfaces as `Drive9Exception` with `code = "cancelled"`.
      *
-     * On any failure (network error, cancellation, write error) the
-     * partial local file is deleted so callers do not mistake a partial
-     * download for the full file. Successful downloads leave the file
-     * in place.
+     * Download writes to a sibling temp file (`.{name}.drive9-tmp-{nonce}`)
+     * inside the parent directory of `local_path`. On success the temp
+     * file is renamed onto `local_path` (atomic on Unix when both paths
+     * share a filesystem). On any failure — network error, cancel, write
+     * error — only the temp file is removed; any pre-existing file at
+     * `local_path` is left untouched.
      */
 open func downloadFile(remotePath: String, localPath: String, progress: Drive9ProgressListener?, cancel: Drive9CancelToken?)throws   {try rustCallWithError(FfiConverterTypeDrive9Exception_lift) {
     uniffi_drive9_mobile_core_fn_method_drive9mobileclient_download_file(
@@ -962,27 +975,36 @@ open func mkdir(path: String)throws   {try rustCallWithError(FfiConverterTypeDri
     /**
      * Patch specific parts of a remote file using bytes read from
      * `local_path`. `dirty_parts` are 1-based part numbers; the server
-     * keeps the unlisted parts. `part_size` overrides the server default
-     * when set. `new_size` is the total file size after patching.
+     * keeps the unlisted parts. `part_size` is the part size the caller
+     * used to compute `dirty_parts` and is also sent to the server so
+     * the upload plan uses the same chunking. `new_size` is the total
+     * file size after patching.
      *
-     * Input validation (rejected with `code = "other"`):
+     * Input validation (rejected with `code = "other"`, before any HTTP
+     * request goes out):
      * - every `part_num >= 1`
-     * - `part_size`, if set, must be `> 0`
+     * - `part_size > 0`
      * - `new_size >= 0`
+     *
+     * `part_size` is required (not Optional) because the closure has to
+     * compute file offsets as `(part_num - 1) * part_size`; the
+     * per-part size returned by the upload plan can be smaller than
+     * `part_size` for the final short part and is the wrong value to use
+     * for offset arithmetic.
      *
      * Cancellation / progress are NOT supported in this iteration;
      * dropping the call mid-patch leaves the server-side multipart upload
      * to expire on its own. Callers that need cancel should compose with
      * external task cancellation and accept the same caveat.
      */
-open func patchFileParts(localPath: String, remotePath: String, dirtyParts: [Int32], newSize: Int64, partSize: Int64?, expectedRevision: Int64?)throws   {try rustCallWithError(FfiConverterTypeDrive9Exception_lift) {
+open func patchFileParts(localPath: String, remotePath: String, dirtyParts: [Int32], newSize: Int64, partSize: Int64, expectedRevision: Int64?)throws   {try rustCallWithError(FfiConverterTypeDrive9Exception_lift) {
     uniffi_drive9_mobile_core_fn_method_drive9mobileclient_patch_file_parts(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(localPath),
         FfiConverterString.lower(remotePath),
         FfiConverterSequenceInt32.lower(dirtyParts),
         FfiConverterInt64.lower(newSize),
-        FfiConverterOptionInt64.lower(partSize),
+        FfiConverterInt64.lower(partSize),
         FfiConverterOptionInt64.lower(expectedRevision),$0
     )
 }
@@ -1884,7 +1906,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_delete() != 51992) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_download_file() != 2993) {
+    if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_download_file() != 5356) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_find() != 51697) {
@@ -1899,7 +1921,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_mkdir() != 42794) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_patch_file_parts() != 19558) {
+    if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_patch_file_parts() != 2733) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_read() != 41349) {

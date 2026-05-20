@@ -344,10 +344,12 @@ impl Drive9MobileClient {
     /// in flight terminates the underlying connection. A cancelled
     /// transfer surfaces as `Drive9Exception` with `code = "cancelled"`.
     ///
-    /// On any failure (network error, cancellation, write error) the
-    /// partial local file is deleted so callers do not mistake a partial
-    /// download for the full file. Successful downloads leave the file
-    /// in place.
+    /// Download writes to a sibling temp file (`.{name}.drive9-tmp-{nonce}`)
+    /// inside the parent directory of `local_path`. On success the temp
+    /// file is renamed onto `local_path` (atomic on Unix when both paths
+    /// share a filesystem). On any failure — network error, cancel, write
+    /// error — only the temp file is removed; any pre-existing file at
+    /// `local_path` is left untouched.
     pub fn download_file(
         &self,
         remote_path: String,
@@ -355,32 +357,75 @@ impl Drive9MobileClient {
         progress: Option<Arc<dyn Drive9ProgressListener>>,
         cancel: Option<Arc<Drive9CancelToken>>,
     ) -> Drive9Result<()> {
-        let local_path_for_cleanup = local_path.clone();
+        let target = Path::new(&local_path);
+        let parent = target.parent().filter(|p| !p.as_os_str().is_empty());
+        let file_name = target
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("download");
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let temp_name = format!(".{}.drive9-tmp-{}", file_name, nonce);
+        let temp_path = match parent {
+            Some(dir) => dir.join(&temp_name),
+            None => std::path::PathBuf::from(&temp_name),
+        };
+        let temp_path_str = temp_path.to_string_lossy().to_string();
+
         let result = self.rt.block_on(self.download_file_inner(
             remote_path,
-            local_path,
+            temp_path_str.clone(),
             progress,
             cancel,
         ));
-        if result.is_err() {
-            // Best-effort cleanup of the partial file. Ignored if the file
-            // was never created (e.g. failure before File::create).
-            self.rt
-                .block_on(tokio::fs::remove_file(&local_path_for_cleanup))
-                .ok();
+
+        match result {
+            Ok(()) => {
+                if let Err(e) = self.rt.block_on(tokio::fs::rename(&temp_path, target)) {
+                    // Best-effort cleanup of the temp file even when rename
+                    // fails; the destination file is unaffected because we
+                    // never wrote to it directly.
+                    self.rt.block_on(tokio::fs::remove_file(&temp_path)).ok();
+                    return Err(Drive9Exception::Drive9 {
+                        code: "io".into(),
+                        status_code: None,
+                        detail: format!(
+                            "rename temp to {}: {}",
+                            target.display(),
+                            e
+                        ),
+                        server_revision: None,
+                    });
+                }
+                Ok(())
+            }
+            Err(e) => {
+                self.rt.block_on(tokio::fs::remove_file(&temp_path)).ok();
+                Err(e)
+            }
         }
-        result
     }
 
     /// Patch specific parts of a remote file using bytes read from
     /// `local_path`. `dirty_parts` are 1-based part numbers; the server
-    /// keeps the unlisted parts. `part_size` overrides the server default
-    /// when set. `new_size` is the total file size after patching.
+    /// keeps the unlisted parts. `part_size` is the part size the caller
+    /// used to compute `dirty_parts` and is also sent to the server so
+    /// the upload plan uses the same chunking. `new_size` is the total
+    /// file size after patching.
     ///
-    /// Input validation (rejected with `code = "other"`):
+    /// Input validation (rejected with `code = "other"`, before any HTTP
+    /// request goes out):
     /// - every `part_num >= 1`
-    /// - `part_size`, if set, must be `> 0`
+    /// - `part_size > 0`
     /// - `new_size >= 0`
+    ///
+    /// `part_size` is required (not Optional) because the closure has to
+    /// compute file offsets as `(part_num - 1) * part_size`; the
+    /// per-part size returned by the upload plan can be smaller than
+    /// `part_size` for the final short part and is the wrong value to use
+    /// for offset arithmetic.
     ///
     /// Cancellation / progress are NOT supported in this iteration;
     /// dropping the call mid-patch leaves the server-side multipart upload
@@ -392,7 +437,7 @@ impl Drive9MobileClient {
         remote_path: String,
         dirty_parts: Vec<i32>,
         new_size: i64,
-        part_size: Option<i64>,
+        part_size: i64,
         expected_revision: Option<i64>,
     ) -> Drive9Result<()> {
         if new_size < 0 {
@@ -403,15 +448,13 @@ impl Drive9MobileClient {
                 server_revision: None,
             });
         }
-        if let Some(ps) = part_size {
-            if ps <= 0 {
-                return Err(Drive9Exception::Drive9 {
-                    code: "other".into(),
-                    status_code: None,
-                    detail: format!("part_size must be > 0, got {}", ps),
-                    server_revision: None,
-                });
-            }
+        if part_size <= 0 {
+            return Err(Drive9Exception::Drive9 {
+                code: "other".into(),
+                status_code: None,
+                detail: format!("part_size must be > 0, got {}", part_size),
+                server_revision: None,
+            });
         }
         if dirty_parts.iter().any(|&p| p < 1) {
             return Err(Drive9Exception::Drive9 {
@@ -422,19 +465,23 @@ impl Drive9MobileClient {
             });
         }
         let dirty = dirty_parts.clone();
+        let global_part_size = part_size;
         let local_path = local_path.clone();
-        let read_part = move |part_num: i32, part_size: i64, _orig: Option<&[u8]>| -> Result<Vec<u8>, Drive9Error> {
-            if part_size <= 0 {
+        let read_part = move |part_num: i32, requested_size: i64, _orig: Option<&[u8]>| -> Result<Vec<u8>, Drive9Error> {
+            if requested_size <= 0 {
                 return Err(Drive9Error::Other(format!(
-                    "server returned part_size {} for part {}",
-                    part_size, part_num
+                    "server returned requested_size {} for part {}",
+                    requested_size, part_num
                 )));
             }
-            let offset = (part_num as i64 - 1) * part_size;
+            // Offset uses the caller-supplied global part_size; the upload
+            // plan may report a smaller `requested_size` for the final
+            // short part, which is correct for the read length but wrong
+            // for computing where this part begins in the local file.
+            let offset = (part_num as i64 - 1) * global_part_size;
             let mut file = std::fs::File::open(Path::new(&local_path))?;
             file.seek(SeekFrom::Start(offset as u64))?;
-            // Last part may be shorter than part_size; stop reading at EOF.
-            let mut buf = vec![0u8; part_size as usize];
+            let mut buf = vec![0u8; requested_size as usize];
             let mut filled = 0usize;
             while filled < buf.len() {
                 let n = file.read(&mut buf[filled..])?;
@@ -443,17 +490,15 @@ impl Drive9MobileClient {
                 }
                 filled += n;
             }
-            // The server-supplied `part_size` here is authoritative for this
-            // specific part (the upload plan already accounts for the final
-            // short part), so a short read means the local file does not
-            // match the declared new_size. Surface that explicitly instead
-            // of uploading short data.
+            // A short read means the local file does not extend to cover
+            // the bytes the upload plan asked for; surface this instead of
+            // uploading truncated data and pretending success.
             buf.truncate(filled);
-            if buf.len() != part_size as usize {
+            if buf.len() != requested_size as usize {
                 return Err(Drive9Error::Other(format!(
                     "short read for part {}: expected {} bytes, got {}",
                     part_num,
-                    part_size,
+                    requested_size,
                     buf.len()
                 )));
             }
@@ -464,7 +509,7 @@ impl Drive9MobileClient {
             new_size,
             &dirty,
             read_part,
-            part_size,
+            Some(part_size),
             expected_revision,
         ))?;
         Ok(())

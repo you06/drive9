@@ -4,7 +4,6 @@
 //! without needing the Kotlin / Swift toolchain.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use drive9_mobile_core::{
@@ -407,7 +406,7 @@ fn patch_file_parts_validates_inputs() {
 
     // new_size < 0
     let err = client
-        .patch_file_parts(local_str.clone(), "/r".into(), vec![1], -1, None, None)
+        .patch_file_parts(local_str.clone(), "/r".into(), vec![1], -1, 100, None)
         .unwrap_err();
     let Drive9Exception::Drive9 { code, detail, .. } = err;
     assert_eq!(code, "other");
@@ -415,7 +414,7 @@ fn patch_file_parts_validates_inputs() {
 
     // part_size <= 0
     let err = client
-        .patch_file_parts(local_str.clone(), "/r".into(), vec![1], 100, Some(0), None)
+        .patch_file_parts(local_str.clone(), "/r".into(), vec![1], 100, 0, None)
         .unwrap_err();
     let Drive9Exception::Drive9 { code, detail, .. } = err;
     assert_eq!(code, "other");
@@ -423,7 +422,7 @@ fn patch_file_parts_validates_inputs() {
 
     // dirty_parts contains 0
     let err = client
-        .patch_file_parts(local_str.clone(), "/r".into(), vec![0, 1], 100, None, None)
+        .patch_file_parts(local_str.clone(), "/r".into(), vec![0, 1], 100, 100, None)
         .unwrap_err();
     let Drive9Exception::Drive9 { code, detail, .. } = err;
     assert_eq!(code, "other");
@@ -456,7 +455,7 @@ fn patch_file_parts_short_read_errors() {
             "/r.bin".into(),
             vec![1],
             100,
-            Some(100),
+            100,
             None,
         )
         .unwrap_err();
@@ -472,10 +471,125 @@ fn patch_file_parts_short_read_errors() {
     std::fs::remove_file(&local).ok();
 }
 
-// Avoid the AtomicU64-unused warning when this module is imported elsewhere.
-#[allow(dead_code)]
-fn _atomic_u64_witness() -> AtomicU64 {
-    AtomicU64::new(0)
+#[test]
+fn patch_file_parts_uses_global_part_size_for_offset() {
+    // local file is 150 bytes: bytes 0..100 are 'a', 100..150 are 'b'.
+    // Caller picked part_size=100 → part 1 covers offset 0..100, part 2
+    // covers offset 100..150 (size 50).
+    //
+    // Server plan returns upload_part {number:2,size:50}; the closure
+    // MUST seek to offset 100 (using global part_size) and read 50 bytes
+    // of 'b', not offset 50 (which would be 'a' bytes).
+    let mut server = mockito::Server::new();
+    let upload_url = format!("{}/upload/part-2", server.url());
+    let _patch = server
+        .mock("PATCH", "/v1/fs/r.bin")
+        .with_status(200)
+        .with_body(format!(
+            r#"{{"upload_id":"u1","part_size":100,"upload_parts":[{{"number":2,"url":"{}","size":50}}],"copied_parts":[1]}}"#,
+            upload_url
+        ))
+        .create();
+
+    let received_body = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let received_body_clone = Arc::clone(&received_body);
+    let _put = server
+        .mock("PUT", "/upload/part-2")
+        .with_status(200)
+        .with_header("ETag", "etag-2")
+        .match_request(move |req| {
+            if let Ok(body) = req.body() {
+                *received_body_clone.lock().unwrap() = body.to_vec();
+            }
+            true
+        })
+        .create();
+    let _complete = server
+        .mock("POST", "/v1/uploads/u1/complete")
+        .with_status(200)
+        .create();
+
+    let client = Drive9MobileClient::new(server.url(), "k".into());
+    let local = writable_tempfile_path("patch_offset");
+    let mut body = vec![b'a'; 100];
+    body.extend(std::iter::repeat(b'b').take(50));
+    std::fs::write(&local, &body).unwrap();
+
+    client
+        .patch_file_parts(
+            local.to_string_lossy().to_string(),
+            "/r.bin".into(),
+            vec![2],
+            150,
+            100,
+            None,
+        )
+        .unwrap();
+
+    let received = received_body.lock().unwrap().clone();
+    assert_eq!(received.len(), 50, "expected 50 bytes, got {}", received.len());
+    assert!(
+        received.iter().all(|&b| b == b'b'),
+        "expected all 'b' bytes (offset 100..150), got: {:?}",
+        &received[..received.len().min(10)]
+    );
+    std::fs::remove_file(&local).ok();
+}
+
+#[test]
+fn download_file_preserves_preexisting_destination_on_failure() {
+    // The destination already has user content. A failed/cancelled download
+    // must not touch it: write to a sibling temp file, rename on success,
+    // remove temp on failure.
+    let mut server = mockito::Server::new();
+    let _head = server
+        .mock("HEAD", "/v1/fs/cancel.bin")
+        .with_status(200)
+        .with_header("Content-Length", "10000")
+        .create();
+    let _get = server
+        .mock("GET", "/v1/fs/cancel.bin")
+        .with_status(200)
+        .with_body(vec![b'b'; 10_000])
+        .create();
+
+    let dest = writable_tempfile_path("download_preserve");
+    let original = b"do not overwrite me".to_vec();
+    std::fs::write(&dest, &original).unwrap();
+
+    let client = Drive9MobileClient::new(server.url(), "k".into());
+    let token = Drive9CancelToken::new();
+    token.cancel();
+    let err = client
+        .download_file(
+            "/cancel.bin".into(),
+            dest.to_string_lossy().to_string(),
+            None,
+            Some(token),
+        )
+        .unwrap_err();
+    let Drive9Exception::Drive9 { code, .. } = err;
+    assert_eq!(code, "cancelled");
+    let after = std::fs::read(&dest).unwrap();
+    assert_eq!(
+        after, original,
+        "pre-existing destination must be unchanged on failure"
+    );
+
+    // Sanity: no leftover temp file in the parent directory.
+    let parent = dest.parent().unwrap();
+    let file_name = dest.file_name().unwrap().to_string_lossy().to_string();
+    let leftover = std::fs::read_dir(parent)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .find(|n| n.starts_with(&format!(".{}.drive9-tmp-", file_name)));
+    assert!(
+        leftover.is_none(),
+        "leftover temp file after cancel: {:?}",
+        leftover
+    );
+    std::fs::remove_file(&dest).ok();
 }
 
 #[test]

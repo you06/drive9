@@ -267,7 +267,7 @@ class Drive9Test {
     }
 
     @Test
-    fun downloadFileCancellationDeletesPartialFile() = runBlocking {
+    fun downloadFileCancellationLeavesNoFileWhenDestinationDidNotExist() = runBlocking {
         route("HEAD", "/v1/fs/cancel.bin") { ex ->
             ex.responseHeaders.add("Content-Length", "10000")
             ex.sendResponseHeaders(200, -1); ex.close()
@@ -278,8 +278,10 @@ class Drive9Test {
             ex.responseBody.write(body); ex.close()
         }
 
-        val dest = Files.createTempFile("drive9-kotlin-cancel", ".bin")
-        // Pre-cancel: the download future never gets to write.
+        // Pick a path that does not yet exist; on cancel the wrapper's temp
+        // file is removed and the destination must remain absent.
+        val parent = Files.createTempDirectory("drive9-kotlin-cancel-dir")
+        val dest = parent.resolve("nonexistent.bin")
         val token = Drive9CancelToken()
         token.cancel()
 
@@ -289,7 +291,42 @@ class Drive9Test {
                 client.downloadFile("/cancel.bin", dest.toString(), null, token)
             }
             assertEquals("cancelled", err.code)
-            assertFalse(dest.exists(), "partial file should be cleaned up on cancel")
+            assertFalse(dest.exists(), "destination must not be created on cancel")
+            // Verify no leftover temp files in the parent directory.
+            val leftover = Files.list(parent).use { it.toList() }
+            assertEquals(emptyList(), leftover, "no leftover temp files expected")
+        } finally {
+            dest.deleteIfExists()
+            Files.delete(parent)
+            token.close()
+        }
+    }
+
+    @Test
+    fun downloadFilePreservesPreexistingDestinationOnFailure() = runBlocking {
+        route("HEAD", "/v1/fs/cancel.bin") { ex ->
+            ex.responseHeaders.add("Content-Length", "10000")
+            ex.sendResponseHeaders(200, -1); ex.close()
+        }
+        route("GET", "/v1/fs/cancel.bin") { ex ->
+            val body = ByteArray(10_000) { 'b'.code.toByte() }
+            ex.sendResponseHeaders(200, body.size.toLong())
+            ex.responseBody.write(body); ex.close()
+        }
+
+        val dest = Files.createTempFile("drive9-kotlin-preserve", ".bin")
+        val original = "do not overwrite me".toByteArray()
+        Files.write(dest, original)
+        val token = Drive9CancelToken()
+        token.cancel()
+
+        val client = Drive9Client(baseUrl, "k")
+        try {
+            val err = assertFailsWith<Drive9Exception.Drive9> {
+                client.downloadFile("/cancel.bin", dest.toString(), null, token)
+            }
+            assertEquals("cancelled", err.code)
+            assertContentEquals(original, dest.readBytes())
         } finally {
             dest.deleteIfExists()
             token.close()
@@ -303,7 +340,7 @@ class Drive9Test {
         val client = Drive9Client(baseUrl, "k")
         try {
             val e1 = assertFailsWith<Drive9Exception.Drive9> {
-                client.patchFileParts(local.toString(), "/r", listOf(1), -1L, null, null)
+                client.patchFileParts(local.toString(), "/r", listOf(1), -1L, 100L, null)
             }
             assertEquals("other", e1.code)
             assertTrue("new_size" in e1.detail, "want new_size error: ${e1.detail}")
@@ -315,7 +352,7 @@ class Drive9Test {
             assertTrue("part_size" in e2.detail, "want part_size error: ${e2.detail}")
 
             val e3 = assertFailsWith<Drive9Exception.Drive9> {
-                client.patchFileParts(local.toString(), "/r", listOf(0, 1), 100L, null, null)
+                client.patchFileParts(local.toString(), "/r", listOf(0, 1), 100L, 100L, null)
             }
             assertEquals("other", e3.code)
             assertTrue("dirty_parts" in e3.detail, "want dirty_parts error: ${e3.detail}")

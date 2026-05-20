@@ -106,7 +106,7 @@ public class Drive9Client(baseUrl: String, apiKey: String) {
         remotePath: String,
         dirtyParts: List<Int>,
         newSize: Long,
-        partSize: Long? = null,
+        partSize: Long,
         expectedRevision: Long? = null,
     ): Unit = withContext(Dispatchers.IO) {
         inner.patchFileParts(localPath, remotePath, dirtyParts, newSize, partSize, expectedRevision)

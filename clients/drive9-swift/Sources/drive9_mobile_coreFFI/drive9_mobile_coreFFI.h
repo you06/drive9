@@ -337,7 +337,7 @@ void uniffi_drive9_mobile_core_fn_method_drive9mobileclient_mkdir(uint64_t ptr, 
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DRIVE9_MOBILE_CORE_FN_METHOD_DRIVE9MOBILECLIENT_PATCH_FILE_PARTS
 #define UNIFFI_FFIDEF_UNIFFI_DRIVE9_MOBILE_CORE_FN_METHOD_DRIVE9MOBILECLIENT_PATCH_FILE_PARTS
-void uniffi_drive9_mobile_core_fn_method_drive9mobileclient_patch_file_parts(uint64_t ptr, RustBuffer local_path, RustBuffer remote_path, RustBuffer dirty_parts, int64_t new_size, RustBuffer part_size, RustBuffer expected_revision, RustCallStatus *_Nonnull out_status
+void uniffi_drive9_mobile_core_fn_method_drive9mobileclient_patch_file_parts(uint64_t ptr, RustBuffer local_path, RustBuffer remote_path, RustBuffer dirty_parts, int64_t new_size, int64_t part_size, RustBuffer expected_revision, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DRIVE9_MOBILE_CORE_FN_METHOD_DRIVE9MOBILECLIENT_READ

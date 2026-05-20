@@ -226,7 +226,7 @@ final class Drive9Tests: XCTestCase {
         }
     }
 
-    func testDownloadFileCancellationDeletesPartialFile() async throws {
+    func testDownloadFileCancellationLeavesNoFileWhenDestinationDidNotExist() async throws {
         let body = Data(repeating: UInt8(ascii: "b"), count: 10_000)
         server.route("HEAD", "/v1/fs/cancel.bin") { _ in
             MockResponse(status: 200, body: Data(), extraHeaders: ["Content-Length": "\(body.count)"])
@@ -235,9 +235,13 @@ final class Drive9Tests: XCTestCase {
             MockResponse(status: 200, body: body)
         }
 
-        let dest = FileManager.default.temporaryDirectory
-            .appendingPathComponent("drive9-swift-cancel-\(UUID().uuidString).bin")
-        defer { try? FileManager.default.removeItem(at: dest) }
+        // Use a fresh subdirectory so we can also assert no leftover temp
+        // file remains after the cancellation path runs.
+        let parent = FileManager.default.temporaryDirectory
+            .appendingPathComponent("drive9-swift-cancel-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+        let dest = parent.appendingPathComponent("nonexistent.bin")
+        defer { try? FileManager.default.removeItem(at: parent) }
 
         let token = Drive9CancelToken()
         token.cancel()
@@ -259,8 +263,48 @@ final class Drive9Tests: XCTestCase {
             XCTAssertEqual(code, "cancelled")
             XCTAssertFalse(
                 FileManager.default.fileExists(atPath: dest.path),
-                "partial file should be cleaned up on cancel"
+                "destination must not be created on cancel"
             )
+            let leftover = try FileManager.default.contentsOfDirectory(at: parent, includingPropertiesForKeys: nil)
+            XCTAssertEqual(leftover, [], "no leftover temp files expected")
+        }
+    }
+
+    func testDownloadFilePreservesPreexistingDestinationOnFailure() async throws {
+        let body = Data(repeating: UInt8(ascii: "b"), count: 10_000)
+        server.route("HEAD", "/v1/fs/cancel.bin") { _ in
+            MockResponse(status: 200, body: Data(), extraHeaders: ["Content-Length": "\(body.count)"])
+        }
+        server.route("GET", "/v1/fs/cancel.bin") { _ in
+            MockResponse(status: 200, body: body)
+        }
+
+        let dest = FileManager.default.temporaryDirectory
+            .appendingPathComponent("drive9-swift-preserve-\(UUID().uuidString).bin")
+        let original = Data("do not overwrite me".utf8)
+        try original.write(to: dest)
+        defer { try? FileManager.default.removeItem(at: dest) }
+
+        let token = Drive9CancelToken()
+        token.cancel()
+
+        let client = Drive9Client(baseUrl: server.baseURL, apiKey: "k")
+        do {
+            try await client.downloadFile(
+                remotePath: "/cancel.bin",
+                localPath: dest.path,
+                progress: nil,
+                cancel: token
+            )
+            XCTFail("expected cancellation")
+        } catch let error as Drive9Exception {
+            guard case let .Drive9(code, _, _, _) = error else {
+                XCTFail("unexpected variant: \(error)")
+                return
+            }
+            XCTAssertEqual(code, "cancelled")
+            let after = try Data(contentsOf: dest)
+            XCTAssertEqual(after, original, "pre-existing destination must be unchanged on failure")
         }
     }
 
@@ -271,16 +315,16 @@ final class Drive9Tests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: local) }
 
         let client = Drive9Client(baseUrl: server.baseURL, apiKey: "k")
-        await assertPatchValidationError(client: client, localPath: local.path, newSize: -1, partSize: nil, dirtyParts: [1], wantToken: "new_size")
+        await assertPatchValidationError(client: client, localPath: local.path, newSize: -1, partSize: 100, dirtyParts: [1], wantToken: "new_size")
         await assertPatchValidationError(client: client, localPath: local.path, newSize: 100, partSize: 0, dirtyParts: [1], wantToken: "part_size")
-        await assertPatchValidationError(client: client, localPath: local.path, newSize: 100, partSize: nil, dirtyParts: [0, 1], wantToken: "dirty_parts")
+        await assertPatchValidationError(client: client, localPath: local.path, newSize: 100, partSize: 100, dirtyParts: [0, 1], wantToken: "dirty_parts")
     }
 
     private func assertPatchValidationError(
         client: Drive9Client,
         localPath: String,
         newSize: Int64,
-        partSize: Int64?,
+        partSize: Int64,
         dirtyParts: [Int32],
         wantToken: String,
         file: StaticString = #file,

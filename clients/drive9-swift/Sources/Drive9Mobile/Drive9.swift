@@ -93,6 +93,25 @@ public final class Drive9Client: @unchecked Sendable {
         }.value
     }
 
+    /// Open a streaming multipart upload. The returned
+    /// ``Drive9StreamUpload`` receives parts incrementally. Phase 4A
+    /// only exposes the object-based API; idiomatic
+    /// `AsyncSequence` wrappers are Phase 4B.
+    public func newStreamUpload(
+        remotePath: String,
+        totalSize: Int64,
+        expectedRevision: Int64? = nil
+    ) async throws -> Drive9StreamUpload {
+        let inner = self.inner
+        return try await Task.detached(priority: .userInitiated) {
+            inner.newStreamUpload(
+                remotePath: remotePath,
+                totalSize: totalSize,
+                expectedRevision: expectedRevision
+            )
+        }.value
+    }
+
     /// List vault secret names readable by the current api key / token.
     ///
     /// Mobile vault surface is intentionally read-only: admin operations

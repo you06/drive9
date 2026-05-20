@@ -768,6 +768,18 @@ public protocol Drive9MobileClientProtocol: AnyObject, Sendable {
     func mkdir(path: String) throws 
     
     /**
+     * Open a streaming multipart upload. The returned
+     * [`Drive9StreamUpload`] receives parts incrementally via
+     * `write_part`, finalizes via `complete`, or aborts via `abort`.
+     * `total_size` is the final file size in bytes; `part_size` and
+     * concurrency are chosen by the server-side upload plan.
+     *
+     * Phase 4A surfaces only this object-based API; Kotlin Flow / Swift
+     * AsyncSequence wrappers (Phase 4B) sit on top of it.
+     */
+    func newStreamUpload(remotePath: String, totalSize: Int64, expectedRevision: Int64?)  -> Drive9StreamUpload
+    
+    /**
      * Patch specific parts of a remote file using bytes read from
      * `local_path`. `dirty_parts` are 1-based part numbers; the server
      * keeps the unlisted parts. `part_size` is the part size the caller
@@ -1020,6 +1032,27 @@ open func mkdir(path: String)throws   {try rustCallWithError(FfiConverterTypeDri
         FfiConverterString.lower(path),$0
     )
 }
+}
+    
+    /**
+     * Open a streaming multipart upload. The returned
+     * [`Drive9StreamUpload`] receives parts incrementally via
+     * `write_part`, finalizes via `complete`, or aborts via `abort`.
+     * `total_size` is the final file size in bytes; `part_size` and
+     * concurrency are chosen by the server-side upload plan.
+     *
+     * Phase 4A surfaces only this object-based API; Kotlin Flow / Swift
+     * AsyncSequence wrappers (Phase 4B) sit on top of it.
+     */
+open func newStreamUpload(remotePath: String, totalSize: Int64, expectedRevision: Int64?) -> Drive9StreamUpload  {
+    return try!  FfiConverterTypeDrive9StreamUpload_lift(try! rustCall() {
+    uniffi_drive9_mobile_core_fn_method_drive9mobileclient_new_stream_upload(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(remotePath),
+        FfiConverterInt64.lower(totalSize),
+        FfiConverterOptionInt64.lower(expectedRevision),$0
+    )
+})
 }
     
     /**
@@ -1448,6 +1481,223 @@ public func FfiConverterTypeDrive9ProgressListener_lift(_ handle: UInt64) throws
 #endif
 public func FfiConverterTypeDrive9ProgressListener_lower(_ value: Drive9ProgressListener) -> UInt64 {
     return FfiConverterTypeDrive9ProgressListener.lower(value)
+}
+
+
+
+
+
+
+/**
+ * Streaming multipart upload exposed across FFI as a UniFFI object.
+ *
+ * State machine:
+ * - `Active` → can call `write_part` / `complete` / `abort`.
+ * - After `complete` returns Ok: `Completed`. All further calls reject.
+ * - After `abort` returns Ok: `Aborted`. `abort` itself stays
+ * idempotent; other calls reject.
+ * - When `write_part` or `complete` detects a background upload error
+ * surfaced by `drive9-rs`, the state transitions to `Errored`.
+ * `abort` is still callable in this state so callers can clean up
+ * server-side multipart bookkeeping; other calls reject.
+ *
+ * Backpressure is the underlying `StreamWriter`'s semaphore: once 16
+ * parts are in flight, the next `write_part` blocks until a permit is
+ * released. The Phase 4A test
+ * `write_part_queued_at_permit_aborts_without_uploading` in
+ * `drive9-rs` covers the queued-vs-close race that this object
+ * inherits.
+ */
+public protocol Drive9StreamUploadProtocol: AnyObject, Sendable {
+    
+    /**
+     * Explicit abort. Idempotent: calling abort on an already-aborted
+     * upload returns Ok without contacting the server again. Allowed
+     * in any non-Completed state so callers can clean up server-side
+     * multipart bookkeeping after an upload error.
+     */
+    func abort() throws 
+    
+    /**
+     * Finalize the upload. `final_part_num` is the part number for the
+     * last chunk (which may be smaller than `part_size`); pass an
+     * empty `final_data` if the last part was already written via
+     * `write_part`.
+     */
+    func complete(finalPartNum: Int32, finalData: Data) throws 
+    
+    /**
+     * Queue a part for upload. `part_num` is 1-based; parts may be
+     * written in any order subject to the server-side plan. The call
+     * returns once the part has been accepted by the underlying
+     * concurrency-limit semaphore; the actual HTTP PUT runs in a Tokio
+     * task and any failure surfaces in a subsequent `write_part` or
+     * `complete` call (the object transitions to `Errored`).
+     */
+    func writePart(partNum: Int32, data: Data) throws 
+    
+}
+/**
+ * Streaming multipart upload exposed across FFI as a UniFFI object.
+ *
+ * State machine:
+ * - `Active` → can call `write_part` / `complete` / `abort`.
+ * - After `complete` returns Ok: `Completed`. All further calls reject.
+ * - After `abort` returns Ok: `Aborted`. `abort` itself stays
+ * idempotent; other calls reject.
+ * - When `write_part` or `complete` detects a background upload error
+ * surfaced by `drive9-rs`, the state transitions to `Errored`.
+ * `abort` is still callable in this state so callers can clean up
+ * server-side multipart bookkeeping; other calls reject.
+ *
+ * Backpressure is the underlying `StreamWriter`'s semaphore: once 16
+ * parts are in flight, the next `write_part` blocks until a permit is
+ * released. The Phase 4A test
+ * `write_part_queued_at_permit_aborts_without_uploading` in
+ * `drive9-rs` covers the queued-vs-close race that this object
+ * inherits.
+ */
+open class Drive9StreamUpload: Drive9StreamUploadProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_drive9_mobile_core_fn_clone_drive9streamupload(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_drive9_mobile_core_fn_free_drive9streamupload(handle, $0) }
+    }
+
+    
+
+    
+    /**
+     * Explicit abort. Idempotent: calling abort on an already-aborted
+     * upload returns Ok without contacting the server again. Allowed
+     * in any non-Completed state so callers can clean up server-side
+     * multipart bookkeeping after an upload error.
+     */
+open func abort()throws   {try rustCallWithError(FfiConverterTypeDrive9Exception_lift) {
+    uniffi_drive9_mobile_core_fn_method_drive9streamupload_abort(
+            self.uniffiCloneHandle(),$0
+    )
+}
+}
+    
+    /**
+     * Finalize the upload. `final_part_num` is the part number for the
+     * last chunk (which may be smaller than `part_size`); pass an
+     * empty `final_data` if the last part was already written via
+     * `write_part`.
+     */
+open func complete(finalPartNum: Int32, finalData: Data)throws   {try rustCallWithError(FfiConverterTypeDrive9Exception_lift) {
+    uniffi_drive9_mobile_core_fn_method_drive9streamupload_complete(
+            self.uniffiCloneHandle(),
+        FfiConverterInt32.lower(finalPartNum),
+        FfiConverterData.lower(finalData),$0
+    )
+}
+}
+    
+    /**
+     * Queue a part for upload. `part_num` is 1-based; parts may be
+     * written in any order subject to the server-side plan. The call
+     * returns once the part has been accepted by the underlying
+     * concurrency-limit semaphore; the actual HTTP PUT runs in a Tokio
+     * task and any failure surfaces in a subsequent `write_part` or
+     * `complete` call (the object transitions to `Errored`).
+     */
+open func writePart(partNum: Int32, data: Data)throws   {try rustCallWithError(FfiConverterTypeDrive9Exception_lift) {
+    uniffi_drive9_mobile_core_fn_method_drive9streamupload_write_part(
+            self.uniffiCloneHandle(),
+        FfiConverterInt32.lower(partNum),
+        FfiConverterData.lower(data),$0
+    )
+}
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDrive9StreamUpload: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = Drive9StreamUpload
+
+    public static func lift(_ handle: UInt64) throws -> Drive9StreamUpload {
+        return Drive9StreamUpload(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: Drive9StreamUpload) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Drive9StreamUpload {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: Drive9StreamUpload, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDrive9StreamUpload_lift(_ handle: UInt64) throws -> Drive9StreamUpload {
+    return try FfiConverterTypeDrive9StreamUpload.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDrive9StreamUpload_lower(_ value: Drive9StreamUpload) -> UInt64 {
+    return FfiConverterTypeDrive9StreamUpload.lower(value)
 }
 
 
@@ -2045,6 +2295,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_mkdir() != 42794) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_new_stream_upload() != 36337) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_patch_file_parts() != 2733) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -2073,6 +2326,15 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_drive9_mobile_core_checksum_method_drive9progresslistener_on_progress() != 21944) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_drive9_mobile_core_checksum_method_drive9streamupload_abort() != 24234) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_drive9_mobile_core_checksum_method_drive9streamupload_complete() != 11124) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_drive9_mobile_core_checksum_method_drive9streamupload_write_part() != 58466) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_drive9_mobile_core_checksum_constructor_drive9canceltoken_new() != 6612) {

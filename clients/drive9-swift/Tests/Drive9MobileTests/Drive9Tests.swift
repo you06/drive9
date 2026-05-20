@@ -427,6 +427,112 @@ final class Drive9Tests: XCTestCase {
         }
     }
 
+    func testStreamUploadHappyPathTwoParts() async throws {
+        let uploadId = "u-stream-swift"
+        let partSize: Int64 = 100
+        server.route("POST", "/v2/uploads/initiate") { _ in
+            let body = #"{"upload_id":"\#(uploadId)","key":"k","part_size":\#(partSize),"total_parts":2}"#
+            return MockResponse(status: 200, body: Data(body.utf8), contentType: "application/json")
+        }
+        let baseURL = server.baseURL
+        server.routeAnyQuery("POST", "/v2/uploads/\(uploadId)/presign") { request in
+            let req = String(data: request.body, encoding: .utf8) ?? ""
+            let partNum = req
+                .components(separatedBy: "\"part_number\":")
+                .last?
+                .components(separatedBy: CharacterSet.decimalDigits.inverted)
+                .first
+                .flatMap { Int($0) } ?? 0
+            let body = #"{"number":\#(partNum),"url":"\#(baseURL)/upload/\#(partNum)","size":\#(partSize)}"#
+            return MockResponse(status: 200, body: Data(body.utf8), contentType: "application/json")
+        }
+        let putHits = HitCounter()
+        server.route("PUT", "/upload/1") { _ in
+            putHits.bump()
+            return MockResponse(status: 200, body: Data(), extraHeaders: ["ETag": "e1"])
+        }
+        server.route("PUT", "/upload/2") { _ in
+            putHits.bump()
+            return MockResponse(status: 200, body: Data(), extraHeaders: ["ETag": "e2"])
+        }
+        let completeCalls = HitCounter()
+        server.route("POST", "/v2/uploads/\(uploadId)/complete") { _ in
+            completeCalls.bump()
+            return MockResponse(status: 200, body: Data())
+        }
+
+        let client = Drive9Client(baseUrl: server.baseURL, apiKey: "k")
+        let upload = try await client.newStreamUpload(
+            remotePath: "/big.bin",
+            totalSize: partSize * 2
+        )
+        try upload.writePart(partNum: 1, data: Data(repeating: UInt8(ascii: "a"), count: Int(partSize)))
+        try upload.complete(finalPartNum: 2, finalData: Data(repeating: UInt8(ascii: "a"), count: Int(partSize)))
+        XCTAssertEqual(putHits.get(), 2)
+        XCTAssertEqual(completeCalls.get(), 1)
+
+        do {
+            try upload.writePart(partNum: 3, data: Data())
+            XCTFail("expected rejection after complete")
+        } catch let error as Drive9Exception {
+            guard case let .Drive9(code, _, detail, _) = error else {
+                XCTFail("unexpected variant: \(error)"); return
+            }
+            XCTAssertEqual(code, "other")
+            XCTAssertTrue(detail.contains("completed"), "want completed reason: \(detail)")
+        }
+    }
+
+    func testStreamUploadAbortIsIdempotentAndRejectsFurtherWrites() async throws {
+        let uploadId = "u-stream-swift-abort"
+        let partSize: Int64 = 100
+        server.route("POST", "/v2/uploads/initiate") { _ in
+            let body = #"{"upload_id":"\#(uploadId)","key":"k","part_size":\#(partSize),"total_parts":1}"#
+            return MockResponse(status: 200, body: Data(body.utf8), contentType: "application/json")
+        }
+        let baseURL = server.baseURL
+        server.routeAnyQuery("POST", "/v2/uploads/\(uploadId)/presign") { request in
+            let req = String(data: request.body, encoding: .utf8) ?? ""
+            let partNum = req
+                .components(separatedBy: "\"part_number\":")
+                .last?
+                .components(separatedBy: CharacterSet.decimalDigits.inverted)
+                .first
+                .flatMap { Int($0) } ?? 0
+            let body = #"{"number":\#(partNum),"url":"\#(baseURL)/upload/\#(partNum)","size":\#(partSize)}"#
+            return MockResponse(status: 200, body: Data(body.utf8), contentType: "application/json")
+        }
+        server.route("PUT", "/upload/1") { _ in
+            MockResponse(status: 200, body: Data(), extraHeaders: ["ETag": "e1"])
+        }
+        let abortCalls = HitCounter()
+        server.route("POST", "/v2/uploads/\(uploadId)/abort") { _ in
+            abortCalls.bump()
+            return MockResponse(status: 200, body: Data())
+        }
+
+        let client = Drive9Client(baseUrl: server.baseURL, apiKey: "k")
+        let upload = try await client.newStreamUpload(
+            remotePath: "/abrt.bin",
+            totalSize: partSize
+        )
+        try upload.writePart(partNum: 1, data: Data(repeating: UInt8(ascii: "a"), count: Int(partSize)))
+        try upload.abort()
+        try upload.abort() // idempotent
+        XCTAssertEqual(abortCalls.get(), 1)
+
+        do {
+            try upload.writePart(partNum: 2, data: Data())
+            XCTFail("expected rejection after abort")
+        } catch let error as Drive9Exception {
+            guard case let .Drive9(code, _, detail, _) = error else {
+                XCTFail("unexpected variant: \(error)"); return
+            }
+            XCTAssertEqual(code, "other")
+            XCTAssertTrue(detail.contains("aborted"), "want aborted reason: \(detail)")
+        }
+    }
+
     func testVaultListReadableSecretsHappyPath() async throws {
         server.route("GET", "/v1/vault/read") { _ in
             let body = #"{"secrets":["alpha","beta"]}"#

@@ -418,6 +418,103 @@ class Drive9Test {
     }
 
     @Test
+    fun streamUploadHappyPathTwoParts() = runBlocking {
+        val uploadId = "u-stream-kt"
+        val partSize = 100L
+        route("POST", "/v2/uploads/initiate") { ex ->
+            val body = """{"upload_id":"$uploadId","key":"k","part_size":$partSize,"total_parts":2}"""
+                .toByteArray(StandardCharsets.UTF_8)
+            ex.sendResponseHeaders(200, body.size.toLong())
+            ex.responseBody.write(body); ex.close()
+        }
+        server.createContext("/v2/uploads/$uploadId/presign") { ex ->
+            val req = ex.requestBody.readBytes().toString(StandardCharsets.UTF_8)
+            val partNum = Regex("\"part_number\"\\s*:\\s*(\\d+)").find(req)!!.groupValues[1].toInt()
+            val body = """{"number":$partNum,"url":"$baseUrl/upload/$partNum","size":$partSize}"""
+                .toByteArray(StandardCharsets.UTF_8)
+            ex.sendResponseHeaders(200, body.size.toLong())
+            ex.responseBody.write(body); ex.close()
+        }
+        val putHits = mutableSetOf<Int>()
+        server.createContext("/upload/") { ex ->
+            val partNum = ex.requestURI.rawPath.removePrefix("/upload/").toInt()
+            ex.requestBody.readBytes()
+            synchronized(putHits) { putHits.add(partNum) }
+            ex.responseHeaders.add("ETag", "etag-$partNum")
+            ex.sendResponseHeaders(200, -1); ex.close()
+        }
+        var completeCalls = 0
+        route("POST", "/v2/uploads/$uploadId/complete") { ex ->
+            completeCalls++
+            ex.requestBody.readBytes()
+            ex.sendResponseHeaders(200, -1); ex.close()
+        }
+
+        val client = Drive9Client(baseUrl, "k")
+        val upload = client.newStreamUpload("/big.bin", partSize * 2)
+        try {
+            upload.writePart(1, ByteArray(partSize.toInt()) { 'a'.code.toByte() })
+            upload.complete(2, ByteArray(partSize.toInt()) { 'a'.code.toByte() })
+            assertEquals(setOf(1, 2), synchronized(putHits) { putHits.toSet() })
+            assertEquals(1, completeCalls)
+
+            val err = assertFailsWith<Drive9Exception.Drive9> {
+                upload.writePart(3, byteArrayOf())
+            }
+            assertEquals("other", err.code)
+            assertTrue("completed" in err.detail, "want completed reason: ${err.detail}")
+        } finally {
+            upload.close()
+        }
+    }
+
+    @Test
+    fun streamUploadAbortIsIdempotentAndRejectsFurtherWrites() = runBlocking {
+        val uploadId = "u-stream-abort-kt"
+        val partSize = 100L
+        route("POST", "/v2/uploads/initiate") { ex ->
+            val body = """{"upload_id":"$uploadId","key":"k","part_size":$partSize,"total_parts":1}"""
+                .toByteArray(StandardCharsets.UTF_8)
+            ex.sendResponseHeaders(200, body.size.toLong())
+            ex.responseBody.write(body); ex.close()
+        }
+        server.createContext("/v2/uploads/$uploadId/presign") { ex ->
+            val req = ex.requestBody.readBytes().toString(StandardCharsets.UTF_8)
+            val partNum = Regex("\"part_number\"\\s*:\\s*(\\d+)").find(req)!!.groupValues[1].toInt()
+            val body = """{"number":$partNum,"url":"$baseUrl/upload/$partNum","size":$partSize}"""
+                .toByteArray(StandardCharsets.UTF_8)
+            ex.sendResponseHeaders(200, body.size.toLong())
+            ex.responseBody.write(body); ex.close()
+        }
+        route("PUT", "/upload/1") { ex ->
+            ex.requestBody.readBytes()
+            ex.responseHeaders.add("ETag", "e")
+            ex.sendResponseHeaders(200, -1); ex.close()
+        }
+        var abortCalls = 0
+        route("POST", "/v2/uploads/$uploadId/abort") { ex ->
+            abortCalls++
+            ex.sendResponseHeaders(200, -1); ex.close()
+        }
+
+        val client = Drive9Client(baseUrl, "k")
+        val upload = client.newStreamUpload("/abrt.bin", partSize)
+        try {
+            upload.writePart(1, ByteArray(partSize.toInt()) { 'a'.code.toByte() })
+            upload.abort()
+            upload.abort() // idempotent
+            assertEquals(1, abortCalls)
+
+            val err = assertFailsWith<Drive9Exception.Drive9> {
+                upload.writePart(2, byteArrayOf())
+            }
+            assertTrue("aborted" in err.detail, "want aborted reason: ${err.detail}")
+        } finally {
+            upload.close()
+        }
+    }
+
+    @Test
     fun vaultListReadableSecretsHappyPath() = runBlocking {
         route("GET", "/v1/vault/read") { ex ->
             val body = """{"secrets":["alpha","beta"]}""".toByteArray(StandardCharsets.UTF_8)

@@ -78,6 +78,20 @@ public class Drive9Client(baseUrl: String, apiKey: String) {
     }
 
     /**
+     * Open a streaming multipart upload. The returned
+     * [Drive9StreamUpload] receives parts incrementally. Phase 4A only
+     * exposes the object-based API; idiomatic [kotlinx.coroutines.flow.Flow]
+     * wrappers are Phase 4B.
+     */
+    public suspend fun newStreamUpload(
+        remotePath: String,
+        totalSize: Long,
+        expectedRevision: Long? = null,
+    ): Drive9StreamUpload = withContext(Dispatchers.IO) {
+        inner.newStreamUpload(remotePath, totalSize, expectedRevision)
+    }
+
+    /**
      * List vault secret names readable by the current API key / token.
      *
      * Mobile vault surface is intentionally read-only: admin operations
@@ -161,6 +175,7 @@ public class Drive9Client(baseUrl: String, apiKey: String) {
 
 public typealias Drive9CancelToken = uniffi.drive9_mobile_core.Drive9CancelToken
 public typealias Drive9ProgressListener = uniffi.drive9_mobile_core.Drive9ProgressListener
+public typealias Drive9StreamUpload = uniffi.drive9_mobile_core.Drive9StreamUpload
 
 public data class Drive9FileInfo(
     val name: String,

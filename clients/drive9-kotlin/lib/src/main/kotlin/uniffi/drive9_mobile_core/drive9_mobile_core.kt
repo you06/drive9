@@ -708,6 +708,10 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_drive9_mobile_core_checksum_method_drive9streamupload_complete(
     ): Short
+    external fun uniffi_drive9_mobile_core_checksum_method_drive9streamupload_part_size(
+    ): Short
+    external fun uniffi_drive9_mobile_core_checksum_method_drive9streamupload_total_parts(
+    ): Short
     external fun uniffi_drive9_mobile_core_checksum_method_drive9streamupload_write_part(
     ): Short
     external fun uniffi_drive9_mobile_core_checksum_constructor_drive9canceltoken_new(
@@ -809,6 +813,10 @@ external fun uniffi_drive9_mobile_core_fn_method_drive9streamupload_abort(`ptr`:
 ): Unit
 external fun uniffi_drive9_mobile_core_fn_method_drive9streamupload_complete(`ptr`: Long,`finalPartNum`: Int,`finalData`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
+external fun uniffi_drive9_mobile_core_fn_method_drive9streamupload_part_size(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Long
+external fun uniffi_drive9_mobile_core_fn_method_drive9streamupload_total_parts(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Int
 external fun uniffi_drive9_mobile_core_fn_method_drive9streamupload_write_part(`ptr`: Long,`partNum`: Int,`data`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
 external fun ffi_drive9_mobile_core_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
@@ -1003,6 +1011,12 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_drive9_mobile_core_checksum_method_drive9streamupload_complete() != 11124.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_drive9_mobile_core_checksum_method_drive9streamupload_part_size() != 30926.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_drive9_mobile_core_checksum_method_drive9streamupload_total_parts() != 22985.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_drive9_mobile_core_checksum_method_drive9streamupload_write_part() != 58466.toShort()) {
@@ -3254,6 +3268,22 @@ public interface Drive9StreamUploadInterface {
     fun `complete`(`finalPartNum`: kotlin.Int, `finalData`: kotlin.ByteArray)
     
     /**
+     * Server-chosen part size for this upload. Triggers a one-time
+     * `/v2/uploads/initiate` request on first call; subsequent calls
+     * return the cached value. Foreign Flow / AsyncSequence wrappers
+     * use this to align caller-supplied chunks with the
+     * `write_part` contract; `upload_id` is intentionally not
+     * exposed via FFI.
+     */
+    fun `partSize`(): kotlin.Long
+    
+    /**
+     * Server-chosen total part count for this upload. Same
+     * initiate-once semantics as [`part_size`].
+     */
+    fun `totalParts`(): kotlin.Int
+    
+    /**
      * Queue a part for upload. `part_num` is 1-based; parts may be
      * written in any order subject to the server-side plan. The call
      * returns once the part has been accepted by the underlying
@@ -3418,6 +3448,46 @@ open class Drive9StreamUpload: Disposable, AutoCloseable, Drive9StreamUploadInte
 }
     }
     
+    
+
+    
+    /**
+     * Server-chosen part size for this upload. Triggers a one-time
+     * `/v2/uploads/initiate` request on first call; subsequent calls
+     * return the cached value. Foreign Flow / AsyncSequence wrappers
+     * use this to align caller-supplied chunks with the
+     * `write_part` contract; `upload_id` is intentionally not
+     * exposed via FFI.
+     */
+    @Throws(Drive9Exception::class)override fun `partSize`(): kotlin.Long {
+            return FfiConverterLong.lift(
+    callWithHandle {
+    uniffiRustCallWithError(Drive9Exception) { _status ->
+    UniffiLib.uniffi_drive9_mobile_core_fn_method_drive9streamupload_part_size(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Server-chosen total part count for this upload. Same
+     * initiate-once semantics as [`part_size`].
+     */
+    @Throws(Drive9Exception::class)override fun `totalParts`(): kotlin.Int {
+            return FfiConverterInt.lift(
+    callWithHandle {
+    uniffiRustCallWithError(Drive9Exception) { _status ->
+    UniffiLib.uniffi_drive9_mobile_core_fn_method_drive9streamupload_total_parts(
+        it,
+        _status)
+}
+    }
+    )
+    }
     
 
     

@@ -130,30 +130,46 @@ public class Drive9Client(baseUrl: String, apiKey: String) {
         expectedRevision: Long? = null,
     ) {
         val upload = inner.newStreamUpload(remotePath, totalSize, expectedRevision)
-        var partNum = 0
         var aborted = false
-        // Run abort at most once across all error / cancel / zero-chunk
-        // paths. Suspend helper so withContext(Dispatchers.IO) is
-        // legitimate inside it (Kaltsit review: a runCatching block
-        // is not a suspend lambda and can't call withContext from
-        // inside).
         suspend fun abortQuietly() {
             if (aborted) return
             aborted = true
             try {
                 withContext(Dispatchers.IO) { upload.abort() }
             } catch (_: Throwable) {
-                // Best-effort cleanup; we don't want to mask the
-                // original failure with a secondary abort error.
+                // Best-effort cleanup.
             }
         }
         try {
+            // Phase 4C: ask the server for its part_size up front so we
+            // can auto-rechunk the caller's source. This also forces
+            // /v2/uploads/initiate to happen here, so even a
+            // zero-chunk source now produces a wire-level /abort when
+            // we tear the upload down.
+            val partSize = withContext(Dispatchers.IO) { upload.partSize() }
+            require(partSize > 0) { "server returned non-positive part_size=$partSize" }
+            val partSizeInt = partSize.toInt()
+
+            var pending = ByteArray(0)
+            var nextPart = 1
+            var anyChunkEmitted = false
+
             chunks.collect { chunk ->
-                partNum++
-                val n = partNum
-                withContext(Dispatchers.IO) { upload.writePart(n, chunk) }
+                anyChunkEmitted = true
+                // Append + drain: ensure the buffer never carries a
+                // full part's worth of bytes — split out partSize
+                // slices as soon as available. Worst-case buffer
+                // length after this loop is partSize-1 bytes.
+                pending = if (pending.isEmpty()) chunk else pending + chunk
+                while (pending.size >= partSizeInt) {
+                    val data = pending.copyOfRange(0, partSizeInt)
+                    val n = nextPart++
+                    withContext(Dispatchers.IO) { upload.writePart(n, data) }
+                    pending = pending.copyOfRange(partSizeInt, pending.size)
+                }
             }
-            if (partNum == 0) {
+
+            if (!anyChunkEmitted) {
                 abortQuietly()
                 throw uniffi.drive9_mobile_core.Drive9Exception.Drive9(
                     code = "other",
@@ -162,12 +178,23 @@ public class Drive9Client(baseUrl: String, apiKey: String) {
                     serverRevision = null,
                 )
             }
-            val final = partNum
-            withContext(Dispatchers.IO) { upload.complete(final, byteArrayOf()) }
+
+            // Finalize. Two paths:
+            // - pending is non-empty: that's the last (short) part;
+            //   complete(nextPart, pending) uploads it and finalizes.
+            // - pending is empty (source aligned to partSize): just
+            //   finalize without an extra PUT via complete(nextPart-1,
+            //   empty). The PUT counter on the server side must equal
+            //   the number of full parts we already wrote.
+            if (pending.isNotEmpty()) {
+                val finalPart = nextPart
+                val finalData = pending
+                withContext(Dispatchers.IO) { upload.complete(finalPart, finalData) }
+            } else {
+                val lastPart = nextPart - 1
+                withContext(Dispatchers.IO) { upload.complete(lastPart, byteArrayOf()) }
+            }
         } catch (e: Throwable) {
-            // `aborted` flag means the zero-chunk path's already-fired
-            // abort won't be repeated here when we catch the rethrown
-            // exception.
             abortQuietly()
             throw e
         } finally {

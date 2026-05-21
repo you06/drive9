@@ -629,29 +629,38 @@ class Drive9Test {
         assertContentEquals(body, out)
     }
 
-    @Test
-    fun uploadFlowEachChunkWritesOnePartCompleteEmpty() = runBlocking {
-        val uploadId = "u-flow-upload"
-        val partSize = 100L
+    /// Helper: wire up the standard initiate / presign / put / complete /
+    /// abort routes on the test server and return PUT-body and counter
+    /// references for assertions. Each PUT to /upload/N captures the
+    /// raw body so misaligned re-chunking is visible.
+    private data class StreamRoutes(
+        val partBodies: MutableMap<Int, ByteArray>,
+        val completeCalls: () -> Int,
+        val abortCalls: () -> Int,
+    )
+
+    private fun wireStreamRoutes(uploadId: String, partSize: Long, totalParts: Int): StreamRoutes {
         route("POST", "/v2/uploads/initiate") { ex ->
-            val body = """{"upload_id":"$uploadId","key":"k","part_size":$partSize,"total_parts":3}"""
-                .toByteArray(StandardCharsets.UTF_8)
+            val body =
+                """{"upload_id":"$uploadId","key":"k","part_size":$partSize,"total_parts":$totalParts}"""
+                    .toByteArray(StandardCharsets.UTF_8)
             ex.sendResponseHeaders(200, body.size.toLong())
             ex.responseBody.write(body); ex.close()
         }
         server.createContext("/v2/uploads/$uploadId/presign") { ex ->
             val req = ex.requestBody.readBytes().toString(StandardCharsets.UTF_8)
-            val partNum = Regex("\"part_number\"\\s*:\\s*(\\d+)").find(req)!!.groupValues[1].toInt()
+            val partNum =
+                Regex("\"part_number\"\\s*:\\s*(\\d+)").find(req)!!.groupValues[1].toInt()
             val body = """{"number":$partNum,"url":"$baseUrl/upload/$partNum","size":$partSize}"""
                 .toByteArray(StandardCharsets.UTF_8)
             ex.sendResponseHeaders(200, body.size.toLong())
             ex.responseBody.write(body); ex.close()
         }
-        val putHits = mutableSetOf<Int>()
+        val partBodies = mutableMapOf<Int, ByteArray>()
         server.createContext("/upload/") { ex ->
             val partNum = ex.requestURI.rawPath.removePrefix("/upload/").toInt()
-            ex.requestBody.readBytes()
-            synchronized(putHits) { putHits.add(partNum) }
+            val body = ex.requestBody.readBytes()
+            synchronized(partBodies) { partBodies[partNum] = body }
             ex.responseHeaders.add("ETag", "etag-$partNum")
             ex.sendResponseHeaders(200, -1); ex.close()
         }
@@ -661,60 +670,94 @@ class Drive9Test {
             ex.requestBody.readBytes()
             ex.sendResponseHeaders(200, -1); ex.close()
         }
-
-        val client = Drive9Client(baseUrl, "k")
-        val source = flow {
-            emit(ByteArray(partSize.toInt()) { 'a'.code.toByte() })
-            emit(ByteArray(partSize.toInt()) { 'b'.code.toByte() })
-            emit(ByteArray(partSize.toInt()) { 'c'.code.toByte() })
-        }
-        client.uploadFlow("/flow.bin", partSize * 3, source)
-        assertEquals(setOf(1, 2, 3), synchronized(putHits) { putHits.toSet() })
-        assertEquals(1, completeCalls)
-    }
-
-    @Test
-    fun uploadFlowZeroChunkSourceAbortsAndErrors() = runBlocking {
-        val uploadId = "u-flow-empty"
-        val partSize = 100L
-        route("POST", "/v2/uploads/initiate") { ex ->
-            val body = """{"upload_id":"$uploadId","key":"k","part_size":$partSize,"total_parts":1}"""
-                .toByteArray(StandardCharsets.UTF_8)
-            ex.sendResponseHeaders(200, body.size.toLong())
-            ex.responseBody.write(body); ex.close()
-        }
-        // We don't even expect initiate to be called: uploadFlow only
-        // initiates on the first writePart, and an empty source never
-        // calls writePart. We test that even if init happened (because
-        // the wrapper might choose to), the upload is aborted before
-        // any PUTs.
         var abortCalls = 0
         route("POST", "/v2/uploads/$uploadId/abort") { ex ->
             abortCalls++
             ex.sendResponseHeaders(200, -1); ex.close()
         }
-        var completeCalls = 0
-        route("POST", "/v2/uploads/$uploadId/complete") { ex ->
-            completeCalls++
-            ex.sendResponseHeaders(200, -1); ex.close()
-        }
+        return StreamRoutes(
+            partBodies = partBodies,
+            completeCalls = { completeCalls },
+            abortCalls = { abortCalls },
+        )
+    }
 
+    @Test
+    fun uploadFlowAutoRechunksLargeSingleChunk() = runBlocking {
+        // Single 350-byte chunk + partSize=100 -> three 100-byte
+        // PUTs via writePart, then complete(4, 50 bytes) which
+        // itself issues PUT 4. Wire shows 4 PUTs total with sizes
+        // 100/100/100/50.
+        val routes = wireStreamRoutes("u-rechunk-large", 100L, totalParts = 4)
+        val client = Drive9Client(baseUrl, "k")
+        client.uploadFlow("/large.bin", totalSize = 350L, chunks = flow {
+            emit(ByteArray(350) { 'a'.code.toByte() })
+        })
+        val parts = synchronized(routes.partBodies) { routes.partBodies.toMap() }
+        assertEquals(setOf(1, 2, 3, 4), parts.keys, "want PUTs 1..4 (final via complete)")
+        assertEquals(100, parts.getValue(1).size)
+        assertEquals(100, parts.getValue(2).size)
+        assertEquals(100, parts.getValue(3).size)
+        assertEquals(50, parts.getValue(4).size)
+        assertEquals(1, routes.completeCalls())
+    }
+
+    @Test
+    fun uploadFlowAutoRechunksManySmallChunks() = runBlocking {
+        // Nine 30-byte chunks, partSize=100, totalSize=270.
+        // 270 / 100 = 2 full parts + 70 leftover -> PUTs 1/2 of 100
+        // bytes each via writePart, then complete(3, 70 bytes)
+        // which adds PUT 3 of 70 bytes.
+        val routes = wireStreamRoutes("u-rechunk-small", 100L, totalParts = 3)
+        val client = Drive9Client(baseUrl, "k")
+        client.uploadFlow("/small.bin", totalSize = 270L, chunks = flow {
+            repeat(9) { emit(ByteArray(30) { 'b'.code.toByte() }) }
+        })
+        val parts = synchronized(routes.partBodies) { routes.partBodies.toMap() }
+        assertEquals(setOf(1, 2, 3), parts.keys, "want PUTs 1..3 (final via complete)")
+        assertEquals(100, parts.getValue(1).size)
+        assertEquals(100, parts.getValue(2).size)
+        assertEquals(70, parts.getValue(3).size)
+        assertEquals(1, routes.completeCalls())
+    }
+
+    @Test
+    fun uploadFlowExactAlignmentCompletesWithEmptyFinalData() = runBlocking {
+        // Four 50-byte chunks = 200 bytes, partSize=100 -> 2 full
+        // parts, no leftover. complete(2, empty) must NOT trigger a
+        // third PUT — Kaltsit's review constraint.
+        val routes = wireStreamRoutes("u-rechunk-exact", 100L, totalParts = 2)
+        val client = Drive9Client(baseUrl, "k")
+        client.uploadFlow("/exact.bin", totalSize = 200L, chunks = flow {
+            repeat(4) { emit(ByteArray(50) { 'c'.code.toByte() }) }
+        })
+        val parts = synchronized(routes.partBodies) { routes.partBodies.toMap() }
+        assertEquals(setOf(1, 2), parts.keys, "want exactly 2 PUTs (no spurious final)")
+        assertEquals(100, parts.getValue(1).size)
+        assertEquals(100, parts.getValue(2).size)
+        assertEquals(1, routes.completeCalls())
+    }
+
+    @Test
+    fun uploadFlowZeroChunkSourceAbortsAndErrors() = runBlocking {
+        // Phase 4C: uploadFlow now eagerly calls partSize() to get
+        // server's part_size, which initiates the upload. So a
+        // zero-chunk source MUST hit /abort exactly once on the
+        // wire (different from Phase 4B where initiate didn't
+        // happen and the abort was a no-op).
+        val routes = wireStreamRoutes("u-flow-empty", partSize = 100L, totalParts = 1)
         val client = Drive9Client(baseUrl, "k")
         val source: kotlinx.coroutines.flow.Flow<ByteArray> = flow { /* no emit */ }
         val err = assertFailsWith<Drive9Exception.Drive9> {
-            client.uploadFlow("/empty.bin", partSize, source)
+            client.uploadFlow("/empty.bin", 100L, source)
         }
         assertEquals("other", err.code)
         assertTrue("no chunks" in err.detail, "want 'no chunks' detail: ${err.detail}")
-        assertEquals(0, completeCalls)
-        // abort_upload_v2 should NOT have been called: drive9-rs's
-        // StreamWriter.abort short-circuits without hitting the
-        // server when the upload was never initiated. The Phase 4B
-        // review constraint is that the wrapper does not double-call
-        // abort; with both abort sites guarded by the same `aborted`
-        // flag, abort runs at most once at the wrapper level, and
-        // that single call does not reach the wire here.
-        assertEquals(0, abortCalls)
+        assertEquals(0, routes.completeCalls())
+        // Single abort: the wrapper's `aborted` flag prevents the
+        // catch path from double-aborting after the zero-chunk
+        // branch already fired one.
+        assertEquals(1, routes.abortCalls())
     }
 
     @Test

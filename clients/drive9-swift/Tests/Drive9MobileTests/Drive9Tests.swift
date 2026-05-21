@@ -636,11 +636,26 @@ final class Drive9Tests: XCTestCase {
         XCTAssertEqual(collected, body)
     }
 
-    func testUploadStreamEachChunkWritesOnePart() async throws {
-        let uploadId = "u-stream-up-sw"
-        let partSize: Int64 = 100
+    /// Shared part-body recorder for upload-stream re-chunking tests.
+    /// Each PUT to /upload/N stores its body so we can assert sizes.
+    final class PartBodyRecorder: @unchecked Sendable {
+        private var bodies: [Int: Data] = [:]
+        private let lock = NSLock()
+        func record(part: Int, body: Data) {
+            lock.lock(); bodies[part] = body; lock.unlock()
+        }
+        func snapshot() -> [Int: Data] {
+            lock.lock(); defer { lock.unlock() }; return bodies
+        }
+    }
+
+    private func wireStreamRoutes(
+        uploadId: String,
+        partSize: Int64,
+        totalParts: Int32
+    ) -> (parts: PartBodyRecorder, complete: HitCounter, abort: HitCounter) {
         server.route("POST", "/v2/uploads/initiate") { _ in
-            let body = #"{"upload_id":"\#(uploadId)","key":"k","part_size":\#(partSize),"total_parts":3}"#
+            let body = #"{"upload_id":"\#(uploadId)","key":"k","part_size":\#(partSize),"total_parts":\#(totalParts)}"#
             return MockResponse(status: 200, body: Data(body.utf8), contentType: "application/json")
         }
         let baseURL = server.baseURL
@@ -655,41 +670,17 @@ final class Drive9Tests: XCTestCase {
             let body = #"{"number":\#(partNum),"url":"\#(baseURL)/upload/\#(partNum)","size":\#(partSize)}"#
             return MockResponse(status: 200, body: Data(body.utf8), contentType: "application/json")
         }
-        let putHits = HitCounter()
-        for partNum in 1...3 {
-            server.route("PUT", "/upload/\(partNum)") { _ in
-                putHits.bump()
-                return MockResponse(status: 200, body: Data(), extraHeaders: ["ETag": "e\(partNum)"])
+        let parts = PartBodyRecorder()
+        for partNum in 1...max(1, Int(totalParts) + 1) {
+            let captureNum = partNum
+            server.route("PUT", "/upload/\(partNum)") { request in
+                parts.record(part: captureNum, body: request.body)
+                return MockResponse(
+                    status: 200,
+                    body: Data(),
+                    extraHeaders: ["ETag": "e\(captureNum)"]
+                )
             }
-        }
-        let completeCalls = HitCounter()
-        server.route("POST", "/v2/uploads/\(uploadId)/complete") { _ in
-            completeCalls.bump()
-            return MockResponse(status: 200, body: Data())
-        }
-
-        let client = Drive9Client(baseUrl: server.baseURL, apiKey: "k")
-        let source = AsyncStream<Data> { continuation in
-            continuation.yield(Data(repeating: UInt8(ascii: "a"), count: Int(partSize)))
-            continuation.yield(Data(repeating: UInt8(ascii: "b"), count: Int(partSize)))
-            continuation.yield(Data(repeating: UInt8(ascii: "c"), count: Int(partSize)))
-            continuation.finish()
-        }
-        try await client.uploadStream(
-            remotePath: "/flow.bin",
-            totalSize: partSize * 3,
-            source: source
-        )
-        XCTAssertEqual(putHits.get(), 3)
-        XCTAssertEqual(completeCalls.get(), 1)
-    }
-
-    func testUploadStreamZeroChunkSourceAbortsAndErrors() async throws {
-        let uploadId = "u-stream-up-empty-sw"
-        let partSize: Int64 = 100
-        server.route("POST", "/v2/uploads/initiate") { _ in
-            let body = #"{"upload_id":"\#(uploadId)","key":"k","part_size":\#(partSize),"total_parts":1}"#
-            return MockResponse(status: 200, body: Data(body.utf8), contentType: "application/json")
         }
         let completeCalls = HitCounter()
         server.route("POST", "/v2/uploads/\(uploadId)/complete") { _ in
@@ -701,13 +692,80 @@ final class Drive9Tests: XCTestCase {
             abortCalls.bump()
             return MockResponse(status: 200, body: Data())
         }
+        return (parts: parts, complete: completeCalls, abort: abortCalls)
+    }
 
+    func testUploadStreamAutoRechunksLargeSingleChunk() async throws {
+        // Single 350-byte chunk + partSize=100 -> PUTs 1/2/3 of 100
+        // bytes each, plus PUT 4 of 50 bytes via complete(4, ...).
+        let routes = wireStreamRoutes(uploadId: "u-rechunk-large-sw", partSize: 100, totalParts: 4)
+        let client = Drive9Client(baseUrl: server.baseURL, apiKey: "k")
+        let source = AsyncStream<Data> { continuation in
+            continuation.yield(Data(repeating: UInt8(ascii: "a"), count: 350))
+            continuation.finish()
+        }
+        try await client.uploadStream(remotePath: "/large.bin", totalSize: 350, source: source)
+        let parts = routes.parts.snapshot()
+        XCTAssertEqual(Set(parts.keys), Set([1, 2, 3, 4]))
+        XCTAssertEqual(parts[1]?.count, 100)
+        XCTAssertEqual(parts[2]?.count, 100)
+        XCTAssertEqual(parts[3]?.count, 100)
+        XCTAssertEqual(parts[4]?.count, 50)
+        XCTAssertEqual(routes.complete.get(), 1)
+    }
+
+    func testUploadStreamAutoRechunksManySmallChunks() async throws {
+        // Nine 30-byte chunks, partSize=100, totalSize=270 ->
+        // PUTs 1/2 of 100 bytes, PUT 3 of 70 bytes via complete.
+        let routes = wireStreamRoutes(uploadId: "u-rechunk-small-sw", partSize: 100, totalParts: 3)
+        let client = Drive9Client(baseUrl: server.baseURL, apiKey: "k")
+        let source = AsyncStream<Data> { continuation in
+            for _ in 0..<9 {
+                continuation.yield(Data(repeating: UInt8(ascii: "b"), count: 30))
+            }
+            continuation.finish()
+        }
+        try await client.uploadStream(remotePath: "/small.bin", totalSize: 270, source: source)
+        let parts = routes.parts.snapshot()
+        XCTAssertEqual(Set(parts.keys), Set([1, 2, 3]))
+        XCTAssertEqual(parts[1]?.count, 100)
+        XCTAssertEqual(parts[2]?.count, 100)
+        XCTAssertEqual(parts[3]?.count, 70)
+        XCTAssertEqual(routes.complete.get(), 1)
+    }
+
+    func testUploadStreamExactAlignmentCompletesWithEmptyFinalData() async throws {
+        // Four 50-byte chunks = 200 bytes, partSize=100 -> 2 full
+        // parts only; complete(2, empty) must NOT trigger a 3rd PUT.
+        let routes = wireStreamRoutes(uploadId: "u-rechunk-exact-sw", partSize: 100, totalParts: 2)
+        let client = Drive9Client(baseUrl: server.baseURL, apiKey: "k")
+        let source = AsyncStream<Data> { continuation in
+            for _ in 0..<4 {
+                continuation.yield(Data(repeating: UInt8(ascii: "c"), count: 50))
+            }
+            continuation.finish()
+        }
+        try await client.uploadStream(remotePath: "/exact.bin", totalSize: 200, source: source)
+        let parts = routes.parts.snapshot()
+        XCTAssertEqual(Set(parts.keys), Set([1, 2]))
+        XCTAssertEqual(parts[1]?.count, 100)
+        XCTAssertEqual(parts[2]?.count, 100)
+        XCTAssertEqual(routes.complete.get(), 1)
+    }
+
+    func testUploadStreamZeroChunkSourceAbortsAndErrors() async throws {
+        // Phase 4C: uploadStream now eagerly fetches partSize via
+        // upload.partSize(), which forces /v2/uploads/initiate. A
+        // zero-chunk source therefore MUST hit /abort exactly once
+        // on the wire (different from Phase 4B where initiate
+        // hadn't happened so abort was a no-op).
+        let routes = wireStreamRoutes(uploadId: "u-stream-up-empty-sw", partSize: 100, totalParts: 1)
         let client = Drive9Client(baseUrl: server.baseURL, apiKey: "k")
         let source = AsyncStream<Data> { $0.finish() }
         do {
             try await client.uploadStream(
                 remotePath: "/empty.bin",
-                totalSize: partSize,
+                totalSize: 100,
                 source: source
             )
             XCTFail("expected zero-chunk error")
@@ -718,17 +776,8 @@ final class Drive9Tests: XCTestCase {
             XCTAssertEqual(code, "other")
             XCTAssertTrue(detail.contains("no chunks"), "want 'no chunks' detail: \(detail)")
         }
-        XCTAssertEqual(completeCalls.get(), 0)
-        // Phase 4B review: the wrapper must not double-abort. With
-        // the single-abort flag in place, the zero-chunk path's
-        // abortQuietly fires once, and the rethrown exception's
-        // outer catch finds aborted=true and skips its abort call.
-        // drive9-rs.StreamWriter.abort doesn't hit /abort when the
-        // upload was never initiated, so the on-wire counter is 0
-        // here. A non-zero count would mean abort ran more than
-        // once (because the upload-was-never-initiated optimisation
-        // is unconditional).
-        XCTAssertEqual(abortCalls.get(), 0)
+        XCTAssertEqual(routes.complete.get(), 0)
+        XCTAssertEqual(routes.abort.get(), 1, "Phase 4C: single abort hits the wire")
     }
 
     func testVaultListReadableSecretsHappyPath() async throws {

@@ -135,14 +135,7 @@ public final class Drive9Client: @unchecked Sendable {
                 expectedRevision: expectedRevision
             )
         }.value
-        var partNum: Int32 = 0
         var aborted = false
-        // Run abort at most once across zero-chunk, source-throw, and
-        // task-cancellation paths. The zero-chunk branch and the
-        // catch branch both used to call try? upload.abort() — the
-        // throw from the zero-chunk branch would also be caught by
-        // the surrounding do/catch, double-aborting; this flag closes
-        // that path.
         func abortQuietly() async {
             if aborted { return }
             aborted = true
@@ -151,14 +144,45 @@ public final class Drive9Client: @unchecked Sendable {
             }.value
         }
         do {
-            for try await chunk in source {
-                partNum += 1
-                let n = partNum
-                try await Task.detached(priority: .userInitiated) {
-                    try upload.writePart(partNum: n, data: chunk)
-                }.value
+            // Phase 4C: ask the server for its part_size up front so
+            // we can auto-rechunk. This forces /v2/uploads/initiate
+            // here, so even a zero-chunk source now hits /abort on
+            // teardown (vs Phase 4B where initiate hadn't happened
+            // and abort was a no-op).
+            let partSize = try await Task.detached(priority: .userInitiated) {
+                try upload.partSize()
+            }.value
+            guard partSize > 0 else {
+                throw Drive9Exception.Drive9(
+                    code: "other",
+                    statusCode: nil,
+                    detail: "uploadStream: server returned non-positive part_size=\(partSize)",
+                    serverRevision: nil
+                )
             }
-            if partNum == 0 {
+            let partSizeInt = Int(partSize)
+
+            var pending = Data()
+            var nextPart: Int32 = 1
+            var anyChunkEmitted = false
+
+            for try await chunk in source {
+                anyChunkEmitted = true
+                // Append + drain: the buffer never carries a full
+                // part's worth of bytes after this loop returns.
+                pending.append(chunk)
+                while pending.count >= partSizeInt {
+                    let data = pending.prefix(partSizeInt)
+                    let n = nextPart
+                    nextPart += 1
+                    try await Task.detached(priority: .userInitiated) {
+                        try upload.writePart(partNum: n, data: data)
+                    }.value
+                    pending.removeSubrange(0..<partSizeInt)
+                }
+            }
+
+            if !anyChunkEmitted {
                 await abortQuietly()
                 throw Drive9Exception.Drive9(
                     code: "other",
@@ -167,10 +191,19 @@ public final class Drive9Client: @unchecked Sendable {
                     serverRevision: nil
                 )
             }
-            let final = partNum
-            try await Task.detached(priority: .userInitiated) {
-                try upload.complete(finalPartNum: final, finalData: Data())
-            }.value
+
+            if !pending.isEmpty {
+                let finalPart = nextPart
+                let finalData = pending
+                try await Task.detached(priority: .userInitiated) {
+                    try upload.complete(finalPartNum: finalPart, finalData: finalData)
+                }.value
+            } else {
+                let lastPart = nextPart - 1
+                try await Task.detached(priority: .userInitiated) {
+                    try upload.complete(finalPartNum: lastPart, finalData: Data())
+                }.value
+            }
         } catch {
             await abortQuietly()
             throw error

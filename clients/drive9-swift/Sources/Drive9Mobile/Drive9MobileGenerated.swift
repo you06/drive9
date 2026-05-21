@@ -1752,6 +1752,22 @@ public protocol Drive9StreamUploadProtocol: AnyObject, Sendable {
     func complete(finalPartNum: Int32, finalData: Data) throws 
     
     /**
+     * Server-chosen part size for this upload. Triggers a one-time
+     * `/v2/uploads/initiate` request on first call; subsequent calls
+     * return the cached value. Foreign Flow / AsyncSequence wrappers
+     * use this to align caller-supplied chunks with the
+     * `write_part` contract; `upload_id` is intentionally not
+     * exposed via FFI.
+     */
+    func partSize() throws  -> Int64
+    
+    /**
+     * Server-chosen total part count for this upload. Same
+     * initiate-once semantics as [`part_size`].
+     */
+    func totalParts() throws  -> Int32
+    
+    /**
      * Queue a part for upload. `part_num` is 1-based; parts may be
      * written in any order subject to the server-side plan. The call
      * returns once the part has been accepted by the underlying
@@ -1861,6 +1877,34 @@ open func complete(finalPartNum: Int32, finalData: Data)throws   {try rustCallWi
         FfiConverterData.lower(finalData),$0
     )
 }
+}
+    
+    /**
+     * Server-chosen part size for this upload. Triggers a one-time
+     * `/v2/uploads/initiate` request on first call; subsequent calls
+     * return the cached value. Foreign Flow / AsyncSequence wrappers
+     * use this to align caller-supplied chunks with the
+     * `write_part` contract; `upload_id` is intentionally not
+     * exposed via FFI.
+     */
+open func partSize()throws  -> Int64  {
+    return try  FfiConverterInt64.lift(try rustCallWithError(FfiConverterTypeDrive9Exception_lift) {
+    uniffi_drive9_mobile_core_fn_method_drive9streamupload_part_size(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+    
+    /**
+     * Server-chosen total part count for this upload. Same
+     * initiate-once semantics as [`part_size`].
+     */
+open func totalParts()throws  -> Int32  {
+    return try  FfiConverterInt32.lift(try rustCallWithError(FfiConverterTypeDrive9Exception_lift) {
+    uniffi_drive9_mobile_core_fn_method_drive9streamupload_total_parts(
+            self.uniffiCloneHandle(),$0
+    )
+})
 }
     
     /**
@@ -2590,6 +2634,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_drive9_mobile_core_checksum_method_drive9streamupload_complete() != 11124) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_drive9_mobile_core_checksum_method_drive9streamupload_part_size() != 30926) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_drive9_mobile_core_checksum_method_drive9streamupload_total_parts() != 22985) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_drive9_mobile_core_checksum_method_drive9streamupload_write_part() != 58466) {

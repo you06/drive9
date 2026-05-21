@@ -1263,6 +1263,92 @@ fn stream_download_replays_error() {
 }
 
 #[test]
+fn stream_download_concurrent_read_chunk_marks_terminal_error() {
+    // Two threads racing on read_chunk: one takes the reader and parks
+    // on the socket (TcpListener hangs after headers); the other
+    // observes a None reader and must transition the object to a
+    // terminal Errored state — subsequent calls then replay the same
+    // "concurrent read_chunk is not supported" error rather than
+    // succeeding the moment the first reader puts it back.
+    use std::io::{Read, Write};
+    use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server_done = Arc::new(AtomicBool::new(false));
+    let server_done_t = Arc::clone(&server_done);
+    let server_thread = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut buf = [0u8; 8192];
+        let mut total = Vec::new();
+        loop {
+            let n = stream.read(&mut buf).unwrap();
+            if n == 0 {
+                break;
+            }
+            total.extend_from_slice(&buf[..n]);
+            if total.windows(4).any(|w| w == b"\r\n\r\n") {
+                break;
+            }
+        }
+        let _ = stream.write_all(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 1048576\r\nConnection: close\r\n\r\n",
+        );
+        let _ = stream.flush();
+        while !server_done_t.load(AtomicOrdering::SeqCst) {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    });
+
+    let base_url = format!("http://127.0.0.1:{}", port);
+    let client = Drive9MobileClient::new(base_url, "k".into());
+    let token = Drive9CancelToken::new();
+    let dl = client
+        .new_stream_download("/race.bin".into(), Some(token.clone()))
+        .unwrap();
+
+    // Thread A: starts read_chunk and parks on the socket.
+    let dl_a = dl.clone();
+    let a_thread = std::thread::spawn(move || dl_a.read_chunk());
+
+    // Let A enter read_chunk (so it has the reader taken out).
+    std::thread::sleep(std::time::Duration::from_millis(80));
+
+    // Thread B: from the main thread, fire read_chunk. Should see
+    // reader=None with state still Open -> terminal Errored.
+    let err_b = match dl.read_chunk() {
+        Ok(v) => panic!("expected concurrent error; got Ok({:?})", v.as_ref().map(|d| d.len())),
+        Err(e) => e,
+    };
+    let Drive9Exception::Drive9 { code, detail, .. } = err_b;
+    assert_eq!(code, "other");
+    assert!(
+        detail.contains("concurrent"),
+        "want concurrent reason: {}",
+        detail
+    );
+
+    // Subsequent read_chunk replays the same terminal error.
+    let err_c = match dl.read_chunk() {
+        Ok(v) => panic!("expected replayed concurrent error; got Ok({:?})", v.as_ref().map(|d| d.len())),
+        Err(e) => e,
+    };
+    let Drive9Exception::Drive9 { code, detail, .. } = err_c;
+    assert_eq!(code, "other");
+    assert!(
+        detail.contains("concurrent"),
+        "want concurrent reason on replay: {}",
+        detail
+    );
+
+    // Unblock A so the test exits cleanly.
+    token.cancel();
+    let _ = a_thread.join();
+    server_done.store(true, AtomicOrdering::SeqCst);
+    let _ = server_thread.join();
+}
+
+#[test]
 fn stream_download_cancel_during_read_returns_cancelled() {
     // We need the SAME blocking read_chunk to be woken by token.cancel(),
     // not just for "next read returns cancelled". Mockito buffers the

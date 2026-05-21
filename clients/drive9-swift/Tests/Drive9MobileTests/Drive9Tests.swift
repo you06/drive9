@@ -696,6 +696,11 @@ final class Drive9Tests: XCTestCase {
             completeCalls.bump()
             return MockResponse(status: 200, body: Data())
         }
+        let abortCalls = HitCounter()
+        server.route("POST", "/v2/uploads/\(uploadId)/abort") { _ in
+            abortCalls.bump()
+            return MockResponse(status: 200, body: Data())
+        }
 
         let client = Drive9Client(baseUrl: server.baseURL, apiKey: "k")
         let source = AsyncStream<Data> { $0.finish() }
@@ -714,6 +719,16 @@ final class Drive9Tests: XCTestCase {
             XCTAssertTrue(detail.contains("no chunks"), "want 'no chunks' detail: \(detail)")
         }
         XCTAssertEqual(completeCalls.get(), 0)
+        // Phase 4B review: the wrapper must not double-abort. With
+        // the single-abort flag in place, the zero-chunk path's
+        // abortQuietly fires once, and the rethrown exception's
+        // outer catch finds aborted=true and skips its abort call.
+        // drive9-rs.StreamWriter.abort doesn't hit /abort when the
+        // upload was never initiated, so the on-wire counter is 0
+        // here. A non-zero count would mean abort ran more than
+        // once (because the upload-was-never-initiated optimisation
+        // is unconditional).
+        XCTAssertEqual(abortCalls.get(), 0)
     }
 
     func testVaultListReadableSecretsHappyPath() async throws {

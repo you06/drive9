@@ -131,6 +131,22 @@ public class Drive9Client(baseUrl: String, apiKey: String) {
     ) {
         val upload = inner.newStreamUpload(remotePath, totalSize, expectedRevision)
         var partNum = 0
+        var aborted = false
+        // Run abort at most once across all error / cancel / zero-chunk
+        // paths. Suspend helper so withContext(Dispatchers.IO) is
+        // legitimate inside it (Kaltsit review: a runCatching block
+        // is not a suspend lambda and can't call withContext from
+        // inside).
+        suspend fun abortQuietly() {
+            if (aborted) return
+            aborted = true
+            try {
+                withContext(Dispatchers.IO) { upload.abort() }
+            } catch (_: Throwable) {
+                // Best-effort cleanup; we don't want to mask the
+                // original failure with a secondary abort error.
+            }
+        }
         try {
             chunks.collect { chunk ->
                 partNum++
@@ -138,7 +154,7 @@ public class Drive9Client(baseUrl: String, apiKey: String) {
                 withContext(Dispatchers.IO) { upload.writePart(n, chunk) }
             }
             if (partNum == 0) {
-                withContext(Dispatchers.IO) { upload.abort() }
+                abortQuietly()
                 throw uniffi.drive9_mobile_core.Drive9Exception.Drive9(
                     code = "other",
                     statusCode = null,
@@ -149,7 +165,10 @@ public class Drive9Client(baseUrl: String, apiKey: String) {
             val final = partNum
             withContext(Dispatchers.IO) { upload.complete(final, byteArrayOf()) }
         } catch (e: Throwable) {
-            runCatching { withContext(Dispatchers.IO) { upload.abort() } }
+            // `aborted` flag means the zero-chunk path's already-fired
+            // abort won't be repeated here when we catch the rethrown
+            // exception.
+            abortQuietly()
             throw e
         } finally {
             upload.close()

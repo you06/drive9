@@ -707,10 +707,14 @@ class Drive9Test {
         assertEquals("other", err.code)
         assertTrue("no chunks" in err.detail, "want 'no chunks' detail: ${err.detail}")
         assertEquals(0, completeCalls)
-        // abort may or may not have been called depending on whether
-        // the wrapper triggered init; both behaviours are OK as long
-        // as no PUT/complete fired and the caller saw the explicit
-        // "no chunks" error.
+        // abort_upload_v2 should NOT have been called: drive9-rs's
+        // StreamWriter.abort short-circuits without hitting the
+        // server when the upload was never initiated. The Phase 4B
+        // review constraint is that the wrapper does not double-call
+        // abort; with both abort sites guarded by the same `aborted`
+        // flag, abort runs at most once at the wrapper level, and
+        // that single call does not reach the wire here.
+        assertEquals(0, abortCalls)
     }
 
     @Test

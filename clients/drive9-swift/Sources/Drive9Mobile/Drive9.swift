@@ -136,6 +136,20 @@ public final class Drive9Client: @unchecked Sendable {
             )
         }.value
         var partNum: Int32 = 0
+        var aborted = false
+        // Run abort at most once across zero-chunk, source-throw, and
+        // task-cancellation paths. The zero-chunk branch and the
+        // catch branch both used to call try? upload.abort() — the
+        // throw from the zero-chunk branch would also be caught by
+        // the surrounding do/catch, double-aborting; this flag closes
+        // that path.
+        func abortQuietly() async {
+            if aborted { return }
+            aborted = true
+            _ = try? await Task.detached(priority: .userInitiated) {
+                try upload.abort()
+            }.value
+        }
         do {
             for try await chunk in source {
                 partNum += 1
@@ -145,7 +159,7 @@ public final class Drive9Client: @unchecked Sendable {
                 }.value
             }
             if partNum == 0 {
-                try? upload.abort()
+                await abortQuietly()
                 throw Drive9Exception.Drive9(
                     code: "other",
                     statusCode: nil,
@@ -158,7 +172,7 @@ public final class Drive9Client: @unchecked Sendable {
                 try upload.complete(finalPartNum: final, finalData: Data())
             }.value
         } catch {
-            try? upload.abort()
+            await abortQuietly()
             throw error
         }
     }

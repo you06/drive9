@@ -747,19 +747,56 @@ impl Drive9StreamDownload {
         }
 
         // Take the reader out of the mutex for the duration of the
-        // async read. Concurrent close() may None it from under us, in
-        // which case we surface a clear error.
+        // async read. Concurrent close_stream may None it from under
+        // us (legitimate); concurrent read_chunk from another thread
+        // is undefined and now transitions to terminal Errored so
+        // subsequent reads replay the same error rather than racing
+        // back into the underlying reader once the first read puts it
+        // back.
         let reader_opt = self.reader.lock().unwrap().take();
         let mut reader = match reader_opt {
             Some(r) => r,
             None => {
-                return Err(Drive9Exception::Drive9 {
-                    code: "other".into(),
-                    status_code: None,
-                    detail: "read_chunk: stream reader not available (concurrent close or read?)"
-                        .into(),
-                    server_revision: None,
-                });
+                let mut s = self.state.lock().unwrap();
+                match &*s {
+                    DownloadState::Open => {
+                        // Reader is gone but state is still Open -> the
+                        // only way this can happen is another thread
+                        // raced into read_chunk and took the reader.
+                        // Flag as a terminal misuse.
+                        *s = DownloadState::Errored(
+                            "concurrent read_chunk is not supported".into(),
+                        );
+                        return Err(Drive9Exception::Drive9 {
+                            code: "other".into(),
+                            status_code: None,
+                            detail: "concurrent read_chunk is not supported".into(),
+                            server_revision: None,
+                        });
+                    }
+                    DownloadState::EndOfStream => return Ok(None),
+                    DownloadState::Closed => {
+                        return Err(Drive9Exception::Drive9 {
+                            code: "other".into(),
+                            status_code: None,
+                            detail: "read_chunk: stream download already closed".into(),
+                            server_revision: None,
+                        });
+                    }
+                    DownloadState::Errored(msg) => {
+                        let code = if msg == "operation cancelled" {
+                            "cancelled"
+                        } else {
+                            "other"
+                        };
+                        return Err(Drive9Exception::Drive9 {
+                            code: code.into(),
+                            status_code: None,
+                            detail: msg.clone(),
+                            server_revision: None,
+                        });
+                    }
+                }
             }
         };
 
@@ -790,10 +827,11 @@ impl Drive9StreamDownload {
                 Ok(None)
             }
             Ok(data) => {
-                // Re-check state: a concurrent close() could have
-                // flipped to Closed while we were reading. In that
-                // case, drop the reader and surface a closed error
-                // instead of putting it back.
+                // Re-check state: a concurrent close_stream or
+                // another thread's read_chunk could have flipped
+                // state while we were reading. Drop the reader and
+                // surface the appropriate error instead of putting
+                // the reader back.
                 let s = self.state.lock().unwrap();
                 match &*s {
                     DownloadState::Open => {
@@ -807,10 +845,20 @@ impl Drive9StreamDownload {
                         detail: "read_chunk: stream download closed during read".into(),
                         server_revision: None,
                     }),
-                    other => Err(Drive9Exception::Drive9 {
+                    DownloadState::Errored(msg) => Err(Drive9Exception::Drive9 {
+                        code: if msg == "operation cancelled" {
+                            "cancelled".into()
+                        } else {
+                            "other".into()
+                        },
+                        status_code: None,
+                        detail: msg.clone(),
+                        server_revision: None,
+                    }),
+                    DownloadState::EndOfStream => Err(Drive9Exception::Drive9 {
                         code: "other".into(),
                         status_code: None,
-                        detail: format!("read_chunk: unexpected state {:?}", other),
+                        detail: "read_chunk: state went to EndOfStream during read".into(),
                         server_revision: None,
                     }),
                 }

@@ -437,6 +437,25 @@ impl Drive9MobileClient {
         }
     }
 
+    /// Open a streaming download. The returned
+    /// [`Drive9StreamDownload`] yields chunks via `read_chunk` until
+    /// EOF; the caller is responsible for calling `close` (or breaking
+    /// iteration in the Kotlin/Swift facade wrappers, which call
+    /// `close` for them).
+    pub fn new_stream_download(
+        &self,
+        remote_path: String,
+        cancel: Option<Arc<Drive9CancelToken>>,
+    ) -> Drive9Result<Arc<Drive9StreamDownload>> {
+        let reader = self.rt.block_on(self.inner.read_stream(&remote_path))?;
+        Ok(Arc::new(Drive9StreamDownload {
+            rt: Arc::clone(&self.rt),
+            reader: std::sync::Mutex::new(Some(reader)),
+            state: std::sync::Mutex::new(DownloadState::Open),
+            cancel,
+        }))
+    }
+
     /// Open a streaming multipart upload. The returned
     /// [`Drive9StreamUpload`] receives parts incrementally via
     /// `write_part`, finalizes via `complete`, or aborts via `abort`.
@@ -651,6 +670,193 @@ impl Drive9MobileClient {
 }
 
 const CHUNK_SIZE: usize = 64 * 1024;
+
+/// Lifecycle state of [`Drive9StreamDownload`]. Stored as `Errored(msg)`
+/// rather than a separate error string field so the final state lookup
+/// and the replayable error live in one place.
+#[derive(Debug, Clone)]
+enum DownloadState {
+    Open,
+    EndOfStream,
+    Closed,
+    Errored(String),
+}
+
+/// Streaming download exposed as a UniFFI object. Callers pull chunks
+/// with `read_chunk` (sync; bridges to the underlying async read on the
+/// internal Tokio runtime). The Kotlin / Swift facade wrappers sit on
+/// top of this — see `downloadFlow` / `downloadStream`.
+///
+/// Thread-safety: `read_chunk` is NOT safe to call concurrently from
+/// multiple threads on the same object — the foreign facade wrappers
+/// invoke it sequentially. `close` IS safe to call concurrently with
+/// `read_chunk`: it flips the state to Closed and drops the reader as
+/// soon as the in-flight read returns.
+///
+/// Cancellation: if a `Drive9CancelToken` was supplied to
+/// `new_stream_download`, an in-flight `read_chunk` is woken via
+/// `tokio::select!` when the token flips, and surfaces as
+/// `Drive9Exception` with `code = "cancelled"`. Subsequent
+/// `read_chunk` calls replay the same error. If no token was
+/// supplied, only an explicit `close` will terminate the stream, and
+/// only after the current chunk read finishes naturally.
+#[derive(uniffi::Object)]
+pub struct Drive9StreamDownload {
+    rt: Arc<Runtime>,
+    /// Boxed AsyncRead taken out of the mutex during a chunk read and
+    /// put back if more chunks remain. None means terminal state or a
+    /// concurrent close took it.
+    reader: std::sync::Mutex<Option<Box<dyn tokio::io::AsyncRead + Unpin + Send>>>,
+    state: std::sync::Mutex<DownloadState>,
+    cancel: Option<Arc<Drive9CancelToken>>,
+}
+
+#[uniffi::export]
+impl Drive9StreamDownload {
+    /// Pull the next chunk. Returns Some(bytes) for data, None on EOF.
+    /// On error, the object transitions to terminal `Errored` and
+    /// subsequent calls re-surface the same error.
+    pub fn read_chunk(&self) -> Drive9Result<Option<Vec<u8>>> {
+        // Terminal state short-circuits before touching the reader.
+        {
+            let s = self.state.lock().unwrap();
+            match &*s {
+                DownloadState::Open => {}
+                DownloadState::EndOfStream => return Ok(None),
+                DownloadState::Closed => {
+                    return Err(Drive9Exception::Drive9 {
+                        code: "other".into(),
+                        status_code: None,
+                        detail: "read_chunk: stream download already closed".into(),
+                        server_revision: None,
+                    });
+                }
+                DownloadState::Errored(msg) => {
+                    return Err(Drive9Exception::Drive9 {
+                        code: if msg == "operation cancelled" {
+                            "cancelled".into()
+                        } else {
+                            "other".into()
+                        },
+                        status_code: None,
+                        detail: msg.clone(),
+                        server_revision: None,
+                    });
+                }
+            }
+        }
+
+        // Take the reader out of the mutex for the duration of the
+        // async read. Concurrent close() may None it from under us, in
+        // which case we surface a clear error.
+        let reader_opt = self.reader.lock().unwrap().take();
+        let mut reader = match reader_opt {
+            Some(r) => r,
+            None => {
+                return Err(Drive9Exception::Drive9 {
+                    code: "other".into(),
+                    status_code: None,
+                    detail: "read_chunk: stream reader not available (concurrent close or read?)"
+                        .into(),
+                    server_revision: None,
+                });
+            }
+        };
+
+        let cancel_for_read = self.cancel.clone();
+        let result: Result<Vec<u8>, Drive9Error> = self.rt.block_on(async {
+            use tokio::io::AsyncReadExt;
+            let mut buf = vec![0u8; CHUNK_SIZE];
+            let n = match cancel_for_read {
+                Some(c) => tokio::select! {
+                    r = reader.read(&mut buf) => r.map_err(Drive9Error::Io)?,
+                    _ = c.wait() => return Err(Drive9Error::Cancelled),
+                },
+                None => reader.read(&mut buf).await.map_err(Drive9Error::Io)?,
+            };
+            buf.truncate(n);
+            Ok(buf)
+        });
+
+        match result {
+            Ok(data) if data.is_empty() => {
+                // EOF: drop reader, mark EndOfStream.
+                let mut s = self.state.lock().unwrap();
+                if matches!(*s, DownloadState::Open) {
+                    *s = DownloadState::EndOfStream;
+                }
+                // `reader` is dropped at scope exit, releasing the
+                // underlying response.
+                Ok(None)
+            }
+            Ok(data) => {
+                // Re-check state: a concurrent close() could have
+                // flipped to Closed while we were reading. In that
+                // case, drop the reader and surface a closed error
+                // instead of putting it back.
+                let s = self.state.lock().unwrap();
+                match &*s {
+                    DownloadState::Open => {
+                        drop(s);
+                        *self.reader.lock().unwrap() = Some(reader);
+                        Ok(Some(data))
+                    }
+                    DownloadState::Closed => Err(Drive9Exception::Drive9 {
+                        code: "other".into(),
+                        status_code: None,
+                        detail: "read_chunk: stream download closed during read".into(),
+                        server_revision: None,
+                    }),
+                    other => Err(Drive9Exception::Drive9 {
+                        code: "other".into(),
+                        status_code: None,
+                        detail: format!("read_chunk: unexpected state {:?}", other),
+                        server_revision: None,
+                    }),
+                }
+            }
+            Err(Drive9Error::Cancelled) => {
+                let mut s = self.state.lock().unwrap();
+                if matches!(*s, DownloadState::Open) {
+                    *s = DownloadState::Errored("operation cancelled".into());
+                }
+                Err(Drive9Exception::from(Drive9Error::Cancelled))
+            }
+            Err(e) => {
+                let msg = format!("{}", e);
+                let mut s = self.state.lock().unwrap();
+                if matches!(*s, DownloadState::Open) {
+                    *s = DownloadState::Errored(msg);
+                }
+                Err(Drive9Exception::from(e))
+            }
+        }
+    }
+
+    /// Close the stream. Idempotent. If a `read_chunk` is currently
+    /// in flight, the chunk read is allowed to finish (it will not be
+    /// retried); to cancel mid-read use the `Drive9CancelToken`
+    /// supplied to `new_stream_download`.
+    ///
+    /// Named `close_stream` rather than `close` because UniFFI also
+    /// emits an `AutoCloseable.close()` on the generated Kotlin /
+    /// Swift class for handle disposal; a Rust `close` method would
+    /// override that and merge two semantically distinct
+    /// responsibilities into one symbol.
+    pub fn close_stream(&self) {
+        {
+            let mut s = self.state.lock().unwrap();
+            if matches!(*s, DownloadState::Open) {
+                *s = DownloadState::Closed;
+            }
+        }
+        // Drop the reader if no concurrent read_chunk is holding it.
+        // If a read is in flight, our state.Closed flag will cause it
+        // to drop the reader instead of putting it back.
+        let mut g = self.reader.lock().unwrap();
+        *g = None;
+    }
+}
 
 /// Lifecycle state of a [`Drive9StreamUpload`]. Enforced in the wrapper
 /// so foreign callers see consistent rejection messages regardless of

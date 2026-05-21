@@ -1184,6 +1184,184 @@ fn stream_upload_part_error_transitions_to_errored() {
 }
 
 #[test]
+fn stream_download_happy_path_multiple_chunks() {
+    let mut server = mockito::Server::new();
+    let body: Vec<u8> = (0..200_000).map(|i| (i % 251) as u8).collect();
+    let _get = server
+        .mock("GET", "/v1/fs/big.bin")
+        .with_status(200)
+        .with_body(body.clone())
+        .create();
+
+    let client = Drive9MobileClient::new(server.url(), "k".into());
+    let dl = client
+        .new_stream_download("/big.bin".into(), None)
+        .unwrap();
+    let mut out = Vec::new();
+    loop {
+        match dl.read_chunk().unwrap() {
+            Some(chunk) => out.extend_from_slice(&chunk),
+            None => break,
+        }
+    }
+    assert_eq!(out, body);
+    // After EOF, subsequent read returns None too.
+    assert!(dl.read_chunk().unwrap().is_none());
+    dl.close_stream();
+    // close after EOF is a no-op; further read_chunk should still
+    // return None (terminal state stays EndOfStream).
+}
+
+#[test]
+fn stream_download_close_blocks_further_reads() {
+    let mut server = mockito::Server::new();
+    let body = vec![b'a'; 200_000];
+    let _get = server
+        .mock("GET", "/v1/fs/closeme.bin")
+        .with_status(200)
+        .with_body(body)
+        .create();
+    let client = Drive9MobileClient::new(server.url(), "k".into());
+    let dl = client
+        .new_stream_download("/closeme.bin".into(), None)
+        .unwrap();
+    // First chunk lands fine.
+    assert!(dl.read_chunk().unwrap().is_some());
+    dl.close_stream();
+    // close is idempotent.
+    dl.close_stream();
+    let err = dl.read_chunk().unwrap_err();
+    let Drive9Exception::Drive9 { code, detail, .. } = err;
+    assert_eq!(code, "other");
+    assert!(
+        detail.contains("closed"),
+        "want closed reason: {}",
+        detail
+    );
+}
+
+#[test]
+fn stream_download_replays_error() {
+    let mut server = mockito::Server::new();
+    let _get = server
+        .mock("GET", "/v1/fs/nope.bin")
+        .with_status(404)
+        .with_body(r#"{"error":"not found"}"#)
+        .create();
+    let client = Drive9MobileClient::new(server.url(), "k".into());
+    // The 404 surfaces at new_stream_download (read_stream issues the
+    // GET and check_error returns Err). Verify the constructor path.
+    let err = match client.new_stream_download("/nope.bin".into(), None) {
+        Err(e) => e,
+        Ok(_) => panic!("expected error from new_stream_download"),
+    };
+    let Drive9Exception::Drive9 {
+        code, status_code, ..
+    } = err;
+    assert_eq!(code, "http_status");
+    assert_eq!(status_code, Some(404));
+}
+
+#[test]
+fn stream_download_cancel_during_read_returns_cancelled() {
+    // We need the SAME blocking read_chunk to be woken by token.cancel(),
+    // not just for "next read returns cancelled". Mockito buffers the
+    // whole response body before sending, so it can't reliably park
+    // read_chunk mid-stream. Use a raw TcpListener that sends 200 OK
+    // headers plus a single small chunk, then hangs — that lands one
+    // chunk at the client and parks subsequent reads waiting on more
+    // body bytes.
+    use std::io::{Read, Write};
+    use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server_done = Arc::new(AtomicBool::new(false));
+    let server_done_t = Arc::clone(&server_done);
+
+    let server_thread = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut buf = [0u8; 8192];
+        // Drain the HTTP request headers (until \r\n\r\n).
+        let mut total = Vec::new();
+        loop {
+            let n = stream.read(&mut buf).unwrap();
+            if n == 0 {
+                break;
+            }
+            total.extend_from_slice(&buf[..n]);
+            if total.windows(4).any(|w| w == b"\r\n\r\n") {
+                break;
+            }
+        }
+        // Send 200 OK with a Content-Length larger than what we'll
+        // actually deliver, then send one small chunk and hang. This
+        // forces read_chunk to park waiting for the rest of the body.
+        let _ = stream.write_all(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 1048576\r\nConnection: close\r\n\r\n",
+        );
+        let _ = stream.write_all(&vec![b'b'; 1024]);
+        let _ = stream.flush();
+        // Hang until the test marks us done (after the cancel).
+        while !server_done_t.load(AtomicOrdering::SeqCst) {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    });
+
+    let base_url = format!("http://127.0.0.1:{}", port);
+    let client = Drive9MobileClient::new(base_url, "k".into());
+    let token = Drive9CancelToken::new();
+    let dl = client
+        .new_stream_download("/slow.bin".into(), Some(token.clone()))
+        .unwrap();
+
+    // First chunk should arrive fine (server already wrote 1024 bytes).
+    let first = dl.read_chunk().unwrap();
+    assert!(first.is_some(), "first chunk should arrive before cancel");
+
+    // Spawn a second read_chunk; it will park waiting for more body.
+    let dl_for_thread = dl.clone();
+    let read_thread = std::thread::spawn(move || {
+        let start = std::time::Instant::now();
+        let result = dl_for_thread.read_chunk();
+        (start.elapsed(), result)
+    });
+
+    // Give read_chunk a moment to park, then cancel.
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    token.cancel();
+
+    let (elapsed, result) = read_thread.join().unwrap();
+    let err = match result {
+        Err(e) => e,
+        Ok(v) => panic!(
+            "expected cancelled error from mid-read cancel; got Ok({:?})",
+            v.as_ref().map(|d| d.len())
+        ),
+    };
+    let Drive9Exception::Drive9 { code, .. } = err;
+    assert_eq!(code, "cancelled");
+    // The cancel must wake the SAME read call, not just the next one.
+    assert!(
+        elapsed < std::time::Duration::from_millis(500),
+        "expected mid-read cancel within 500ms; got {:?}",
+        elapsed
+    );
+
+    // Subsequent read_chunk replays cancelled.
+    let err2 = match dl.read_chunk() {
+        Err(e) => e,
+        Ok(v) => panic!("expected cancelled replay; got Ok({:?})", v),
+    };
+    let Drive9Exception::Drive9 { code, .. } = err2;
+    assert_eq!(code, "cancelled");
+
+    // Let the server thread finish cleanly.
+    server_done.store(true, AtomicOrdering::SeqCst);
+    let _ = server_thread.join();
+}
+
+#[test]
 fn detail_field_carries_message() {
     let mut server = mockito::Server::new();
     let _m = server

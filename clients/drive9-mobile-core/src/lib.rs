@@ -981,6 +981,38 @@ impl Drive9StreamUpload {
         }
     }
 
+    /// Server-chosen part size for this upload. Triggers a one-time
+    /// `/v2/uploads/initiate` request on first call; subsequent calls
+    /// return the cached value. Foreign Flow / AsyncSequence wrappers
+    /// use this to align caller-supplied chunks with the
+    /// `write_part` contract; `upload_id` is intentionally not
+    /// exposed via FFI.
+    pub fn part_size(&self) -> Drive9Result<i64> {
+        self.guard_writable_or_err("part_size")?;
+        let result = self.rt.block_on(self.inner.part_size());
+        // A part_size failure happens at /v2/uploads/initiate — that's
+        // a background-style failure, not a parameter error, so it
+        // transitions the wrapper to Errored. Pass a unit-typed
+        // borrowed view to observe_result.
+        match &result {
+            Ok(_) => {}
+            Err(e) => self.observe_initiate_error(e),
+        }
+        Ok(result?)
+    }
+
+    /// Server-chosen total part count for this upload. Same
+    /// initiate-once semantics as [`part_size`].
+    pub fn total_parts(&self) -> Drive9Result<i32> {
+        self.guard_writable_or_err("total_parts")?;
+        let result = self.rt.block_on(self.inner.total_parts());
+        match &result {
+            Ok(_) => {}
+            Err(e) => self.observe_initiate_error(e),
+        }
+        Ok(result?)
+    }
+
     /// Explicit abort. Idempotent: calling abort on an already-aborted
     /// upload returns Ok without contacting the server again. Allowed
     /// in any non-Completed state so callers can clean up server-side
@@ -1059,6 +1091,15 @@ impl Drive9StreamUpload {
             if *s == StreamState::Active {
                 *s = StreamState::Errored;
             }
+        }
+    }
+
+    fn observe_initiate_error(&self, _err: &Drive9Error) {
+        // initiate failures aren't parameter errors; flip to Errored
+        // so subsequent write_part / complete also fail fast.
+        let mut s = self.state.lock().unwrap();
+        if *s == StreamState::Active {
+            *s = StreamState::Errored;
         }
     }
 

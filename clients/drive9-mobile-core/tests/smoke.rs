@@ -969,6 +969,37 @@ fn stream_upload_abort_after_write_calls_server_abort() {
 }
 
 #[test]
+fn stream_upload_part_size_total_parts_initiate_once() {
+    // Phase 4C: part_size() / total_parts() lazily call /v2/uploads/initiate
+    // on first use and cache the result; repeated calls hit the cache.
+    let mut server = mockito::Server::new();
+    let upload_id = "u-accessors";
+    let part_size: i64 = 12_345;
+    let total_parts: i32 = 7;
+    let init_mock = server
+        .mock("POST", "/v2/uploads/initiate")
+        .with_status(200)
+        .with_body(format!(
+            r#"{{"upload_id":"{}","key":"k","part_size":{},"total_parts":{}}}"#,
+            upload_id, part_size, total_parts
+        ))
+        .expect(1)
+        .create();
+
+    let client = Drive9MobileClient::new(server.url(), "k".into());
+    let upload = client.new_stream_upload(
+        "/info.bin".into(),
+        part_size * total_parts as i64,
+        None,
+    );
+    assert_eq!(upload.part_size().unwrap(), part_size);
+    assert_eq!(upload.total_parts().unwrap(), total_parts);
+    assert_eq!(upload.part_size().unwrap(), part_size);
+    assert_eq!(upload.total_parts().unwrap(), total_parts);
+    init_mock.assert();
+}
+
+#[test]
 fn stream_upload_parameter_error_keeps_upload_active() {
     // Phase 4A review (Kaltsit): an invalid part_num (e.g. 0) is a
     // caller bug, not a stream failure. The wrapper must NOT poison

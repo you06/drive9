@@ -246,6 +246,81 @@ async fn complete_alone_without_data_still_errors_never_started() {
 }
 
 #[tokio::test]
+async fn initiate_and_accessors_hit_initiate_exactly_once() {
+    // Phase 4C: initiate(), part_size(), and total_parts() are all
+    // idempotent — collectively they hit /v2/uploads/initiate at
+    // most once for a given StreamWriter.
+    let mut server = mockito::Server::new_async().await;
+    let upload_id = "u-accessors";
+    let part_size = 12_345i64;
+    let total_parts = 7i32;
+    let init_mock = server
+        .mock("POST", "/v2/uploads/initiate")
+        .with_status(200)
+        .with_body(format!(
+            r#"{{"upload_id":"{u}","key":"k","part_size":{ps},"total_parts":{tp}}}"#,
+            u = upload_id,
+            ps = part_size,
+            tp = total_parts,
+        ))
+        .expect(1)
+        .create_async()
+        .await;
+
+    let client = Client::new(server.url(), "k");
+    let writer = client.new_stream_writer("/info.bin", part_size * total_parts as i64);
+    assert!(!writer.started().await);
+
+    writer.initiate().await.unwrap();
+    writer.initiate().await.unwrap(); // idempotent
+    assert!(writer.started().await);
+
+    assert_eq!(writer.part_size().await.unwrap(), part_size);
+    assert_eq!(writer.total_parts().await.unwrap(), total_parts);
+    // Accessors called again should still not re-initiate.
+    assert_eq!(writer.part_size().await.unwrap(), part_size);
+
+    init_mock.assert_async().await;
+}
+
+#[tokio::test]
+async fn accessors_reject_after_terminal_state() {
+    let mut server = mockito::Server::new_async().await;
+    let upload_id = "u-accessors-terminal";
+    let part_size = 100i64;
+    let _init = server
+        .mock("POST", "/v2/uploads/initiate")
+        .with_status(200)
+        .with_body(format!(
+            r#"{{"upload_id":"{u}","key":"k","part_size":{ps},"total_parts":1}}"#,
+            u = upload_id,
+            ps = part_size,
+        ))
+        .create_async()
+        .await;
+    let _abort = server
+        .mock(
+            "POST",
+            format!("/v2/uploads/{}/abort", upload_id).as_str(),
+        )
+        .with_status(200)
+        .create_async()
+        .await;
+
+    let client = Client::new(server.url(), "k");
+    let writer = client.new_stream_writer("/info.bin", part_size);
+    writer.part_size().await.unwrap();
+    writer.abort().await.unwrap();
+    let err = writer.part_size().await.unwrap_err();
+    let msg = format!("{}", err);
+    assert!(
+        msg.contains("aborted") || msg.contains("closing"),
+        "want aborted/closing reason: {}",
+        msg
+    );
+}
+
+#[tokio::test]
 async fn abort_is_idempotent() {
     let mut server = mockito::Server::new_async().await;
     let upload_id = "u-idempotent";

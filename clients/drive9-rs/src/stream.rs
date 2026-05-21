@@ -56,6 +56,69 @@ impl StreamWriter {
         self.state.lock().await.started
     }
 
+    /// Idempotent initiate: if the upload has not yet sent an
+    /// `/v2/uploads/initiate` request, do so now. If it has, this is a
+    /// no-op. Rejects when the writer is already closing / aborted /
+    /// completed, so callers can rely on the post-condition "after
+    /// `initiate()` Ok, the writer is in `Active` state with a
+    /// cached upload plan".
+    ///
+    /// Phase 4C exposes this so foreign callers (mobile FFI) can
+    /// learn the server-chosen `part_size` / `total_parts` before
+    /// shaping the input stream.
+    pub async fn initiate(&self) -> Result<(), Drive9Error> {
+        let mut state = self.state.lock().await;
+        if let Some(ref e) = state.err {
+            return Err(Drive9Error::Other(format!(
+                "background upload error: {}",
+                e
+            )));
+        }
+        if state.completed {
+            return Err(Drive9Error::Other(
+                "stream writer already completed".to_string(),
+            ));
+        }
+        if state.aborted {
+            return Err(Drive9Error::Other(
+                "stream writer already aborted".to_string(),
+            ));
+        }
+        if state.closing {
+            return Err(Drive9Error::Other("stream writer is closing".to_string()));
+        }
+        self.init_locked(&mut state).await
+    }
+
+    /// Server-chosen part size. Calls `initiate()` if needed, then
+    /// returns the value from the cached upload plan. Subsequent
+    /// calls hit cache.
+    pub async fn part_size(&self) -> Result<i64, Drive9Error> {
+        self.initiate().await?;
+        let state = self.state.lock().await;
+        state
+            .plan
+            .as_ref()
+            .map(|p| p.part_size)
+            .ok_or_else(|| Drive9Error::Other(
+                "stream writer has no upload plan after initiate".to_string(),
+            ))
+    }
+
+    /// Server-chosen total part count. Same semantics as
+    /// [`part_size`]: initiate-if-needed, then read cached plan.
+    pub async fn total_parts(&self) -> Result<i32, Drive9Error> {
+        self.initiate().await?;
+        let state = self.state.lock().await;
+        state
+            .plan
+            .as_ref()
+            .map(|p| p.total_parts)
+            .ok_or_else(|| Drive9Error::Other(
+                "stream writer has no upload plan after initiate".to_string(),
+            ))
+    }
+
     async fn init_locked(&self, state: &mut StreamState) -> Result<(), Drive9Error> {
         if state.started {
             return Ok(());

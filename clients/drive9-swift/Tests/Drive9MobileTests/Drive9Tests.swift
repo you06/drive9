@@ -620,6 +620,102 @@ final class Drive9Tests: XCTestCase {
         }
     }
 
+    func testDownloadStreamEmitsChunksUntilEof() async throws {
+        var body = Data()
+        for i in 0..<200_000 { body.append(UInt8(i % 251)) }
+        server.route("GET", "/v1/fs/big.bin") { _ in
+            MockResponse(status: 200, body: body)
+        }
+
+        let client = Drive9Client(baseUrl: server.baseURL, apiKey: "k")
+        let stream = try await client.downloadStream(remotePath: "/big.bin")
+        var collected = Data()
+        for try await chunk in stream {
+            collected.append(chunk)
+        }
+        XCTAssertEqual(collected, body)
+    }
+
+    func testUploadStreamEachChunkWritesOnePart() async throws {
+        let uploadId = "u-stream-up-sw"
+        let partSize: Int64 = 100
+        server.route("POST", "/v2/uploads/initiate") { _ in
+            let body = #"{"upload_id":"\#(uploadId)","key":"k","part_size":\#(partSize),"total_parts":3}"#
+            return MockResponse(status: 200, body: Data(body.utf8), contentType: "application/json")
+        }
+        let baseURL = server.baseURL
+        server.routeAnyQuery("POST", "/v2/uploads/\(uploadId)/presign") { request in
+            let req = String(data: request.body, encoding: .utf8) ?? ""
+            let partNum = req
+                .components(separatedBy: "\"part_number\":")
+                .last?
+                .components(separatedBy: CharacterSet.decimalDigits.inverted)
+                .first
+                .flatMap { Int($0) } ?? 0
+            let body = #"{"number":\#(partNum),"url":"\#(baseURL)/upload/\#(partNum)","size":\#(partSize)}"#
+            return MockResponse(status: 200, body: Data(body.utf8), contentType: "application/json")
+        }
+        let putHits = HitCounter()
+        for partNum in 1...3 {
+            server.route("PUT", "/upload/\(partNum)") { _ in
+                putHits.bump()
+                return MockResponse(status: 200, body: Data(), extraHeaders: ["ETag": "e\(partNum)"])
+            }
+        }
+        let completeCalls = HitCounter()
+        server.route("POST", "/v2/uploads/\(uploadId)/complete") { _ in
+            completeCalls.bump()
+            return MockResponse(status: 200, body: Data())
+        }
+
+        let client = Drive9Client(baseUrl: server.baseURL, apiKey: "k")
+        let source = AsyncStream<Data> { continuation in
+            continuation.yield(Data(repeating: UInt8(ascii: "a"), count: Int(partSize)))
+            continuation.yield(Data(repeating: UInt8(ascii: "b"), count: Int(partSize)))
+            continuation.yield(Data(repeating: UInt8(ascii: "c"), count: Int(partSize)))
+            continuation.finish()
+        }
+        try await client.uploadStream(
+            remotePath: "/flow.bin",
+            totalSize: partSize * 3,
+            source: source
+        )
+        XCTAssertEqual(putHits.get(), 3)
+        XCTAssertEqual(completeCalls.get(), 1)
+    }
+
+    func testUploadStreamZeroChunkSourceAbortsAndErrors() async throws {
+        let uploadId = "u-stream-up-empty-sw"
+        let partSize: Int64 = 100
+        server.route("POST", "/v2/uploads/initiate") { _ in
+            let body = #"{"upload_id":"\#(uploadId)","key":"k","part_size":\#(partSize),"total_parts":1}"#
+            return MockResponse(status: 200, body: Data(body.utf8), contentType: "application/json")
+        }
+        let completeCalls = HitCounter()
+        server.route("POST", "/v2/uploads/\(uploadId)/complete") { _ in
+            completeCalls.bump()
+            return MockResponse(status: 200, body: Data())
+        }
+
+        let client = Drive9Client(baseUrl: server.baseURL, apiKey: "k")
+        let source = AsyncStream<Data> { $0.finish() }
+        do {
+            try await client.uploadStream(
+                remotePath: "/empty.bin",
+                totalSize: partSize,
+                source: source
+            )
+            XCTFail("expected zero-chunk error")
+        } catch let error as Drive9Exception {
+            guard case let .Drive9(code, _, detail, _) = error else {
+                XCTFail("unexpected variant: \(error)"); return
+            }
+            XCTAssertEqual(code, "other")
+            XCTAssertTrue(detail.contains("no chunks"), "want 'no chunks' detail: \(detail)")
+        }
+        XCTAssertEqual(completeCalls.get(), 0)
+    }
+
     func testVaultListReadableSecretsHappyPath() async throws {
         server.route("GET", "/v1/vault/read") { _ in
             let body = #"{"secrets":["alpha","beta"]}"#

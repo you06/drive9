@@ -676,6 +676,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_mkdir(
     ): Short
+    external fun uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_new_stream_download(
+    ): Short
     external fun uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_new_stream_upload(
     ): Short
     external fun uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_patch_file_parts(
@@ -697,6 +699,10 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_write(
     ): Short
     external fun uniffi_drive9_mobile_core_checksum_method_drive9progresslistener_on_progress(
+    ): Short
+    external fun uniffi_drive9_mobile_core_checksum_method_drive9streamdownload_close_stream(
+    ): Short
+    external fun uniffi_drive9_mobile_core_checksum_method_drive9streamdownload_read_chunk(
     ): Short
     external fun uniffi_drive9_mobile_core_checksum_method_drive9streamupload_abort(
     ): Short
@@ -757,6 +763,8 @@ external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_list(`ptr`: 
 ): RustBuffer.ByValue
 external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_mkdir(`ptr`: Long,`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
+external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_new_stream_download(`ptr`: Long,`remotePath`: RustBuffer.ByValue,`cancel`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Long
 external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_new_stream_upload(`ptr`: Long,`remotePath`: RustBuffer.ByValue,`totalSize`: Long,`expectedRevision`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Long
 external fun uniffi_drive9_mobile_core_fn_method_drive9mobileclient_patch_file_parts(`ptr`: Long,`localPath`: RustBuffer.ByValue,`remotePath`: RustBuffer.ByValue,`dirtyParts`: RustBuffer.ByValue,`newSize`: Long,`partSize`: Long,`expectedRevision`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -785,6 +793,14 @@ external fun uniffi_drive9_mobile_core_fn_init_callback_vtable_drive9progresslis
 ): Unit
 external fun uniffi_drive9_mobile_core_fn_method_drive9progresslistener_on_progress(`ptr`: Long,`transferred`: Long,`total`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
+external fun uniffi_drive9_mobile_core_fn_clone_drive9streamdownload(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Long
+external fun uniffi_drive9_mobile_core_fn_free_drive9streamdownload(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+external fun uniffi_drive9_mobile_core_fn_method_drive9streamdownload_close_stream(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+external fun uniffi_drive9_mobile_core_fn_method_drive9streamdownload_read_chunk(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_drive9_mobile_core_fn_clone_drive9streamupload(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): Long
 external fun uniffi_drive9_mobile_core_fn_free_drive9streamupload(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
@@ -941,6 +957,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_mkdir() != 42794.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_new_stream_download() != 57958.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_new_stream_upload() != 36337.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -972,6 +991,12 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_drive9_mobile_core_checksum_method_drive9progresslistener_on_progress() != 21944.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_drive9_mobile_core_checksum_method_drive9streamdownload_close_stream() != 22550.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_drive9_mobile_core_checksum_method_drive9streamdownload_read_chunk() != 48316.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_drive9_mobile_core_checksum_method_drive9streamupload_abort() != 24234.toShort()) {
@@ -1800,6 +1825,15 @@ public interface Drive9MobileClientInterface {
     fun `mkdir`(`path`: kotlin.String)
     
     /**
+     * Open a streaming download. The returned
+     * [`Drive9StreamDownload`] yields chunks via `read_chunk` until
+     * EOF; the caller is responsible for calling `close` (or breaking
+     * iteration in the Kotlin/Swift facade wrappers, which call
+     * `close` for them).
+     */
+    fun `newStreamDownload`(`remotePath`: kotlin.String, `cancel`: Drive9CancelToken?): Drive9StreamDownload
+    
+    /**
      * Open a streaming multipart upload. The returned
      * [`Drive9StreamUpload`] receives parts incrementally via
      * `write_part`, finalizes via `complete`, or aborts via `abort`.
@@ -2136,6 +2170,27 @@ open class Drive9MobileClient: Disposable, AutoCloseable, Drive9MobileClientInte
 }
     }
     
+    
+
+    
+    /**
+     * Open a streaming download. The returned
+     * [`Drive9StreamDownload`] yields chunks via `read_chunk` until
+     * EOF; the caller is responsible for calling `close` (or breaking
+     * iteration in the Kotlin/Swift facade wrappers, which call
+     * `close` for them).
+     */
+    @Throws(Drive9Exception::class)override fun `newStreamDownload`(`remotePath`: kotlin.String, `cancel`: Drive9CancelToken?): Drive9StreamDownload {
+            return FfiConverterTypeDrive9StreamDownload.lift(
+    callWithHandle {
+    uniffiRustCallWithError(Drive9Exception) { _status ->
+    UniffiLib.uniffi_drive9_mobile_core_fn_method_drive9mobileclient_new_stream_download(
+        it,
+        FfiConverterString.lower(`remotePath`),FfiConverterOptionalTypeDrive9CancelToken.lower(`cancel`),_status)
+}
+    }
+    )
+    }
     
 
     
@@ -2721,6 +2776,345 @@ public object FfiConverterTypeDrive9ProgressListener: FfiConverter<Drive9Progres
     override fun allocationSize(value: Drive9ProgressListener) = 8UL
 
     override fun write(value: Drive9ProgressListener, buf: ByteBuffer) {
+        buf.putLong(lower(value))
+    }
+}
+
+
+// This template implements a class for working with a Rust struct via a handle
+// to the live Rust struct on the other side of the FFI.
+//
+// There's some subtlety here, because we have to be careful not to operate on a Rust
+// struct after it has been dropped, and because we must expose a public API for freeing
+// theq Kotlin wrapper object in lieu of reliable finalizers. The core requirements are:
+//
+//   * Each instance holds an opaque handle to the underlying Rust struct.
+//     Method calls need to read this handle from the object's state and pass it in to
+//     the Rust FFI.
+//
+//   * When an instance is no longer needed, its handle should be passed to a
+//     special destructor function provided by the Rust FFI, which will drop the
+//     underlying Rust struct.
+//
+//   * Given an instance, calling code is expected to call the special
+//     `destroy` method in order to free it after use, either by calling it explicitly
+//     or by using a higher-level helper like the `use` method. Failing to do so risks
+//     leaking the underlying Rust struct.
+//
+//   * We can't assume that calling code will do the right thing, and must be prepared
+//     to handle Kotlin method calls executing concurrently with or even after a call to
+//     `destroy`, and to handle multiple (possibly concurrent!) calls to `destroy`.
+//
+//   * We must never allow Rust code to operate on the underlying Rust struct after
+//     the destructor has been called, and must never call the destructor more than once.
+//     Doing so may trigger memory unsafety.
+//
+//   * To mitigate many of the risks of leaking memory and use-after-free unsafety, a `Cleaner`
+//     is implemented to call the destructor when the Kotlin object becomes unreachable.
+//     This is done in a background thread. This is not a panacea, and client code should be aware that
+//      1. the thread may starve if some there are objects that have poorly performing
+//     `drop` methods or do significant work in their `drop` methods.
+//      2. the thread is shared across the whole library. This can be tuned by using `android_cleaner = true`,
+//         or `android = true` in the [`kotlin` section of the `uniffi.toml` file](https://mozilla.github.io/uniffi-rs/kotlin/configuration.html).
+//
+// If we try to implement this with mutual exclusion on access to the handle, there is the
+// possibility of a race between a method call and a concurrent call to `destroy`:
+//
+//    * Thread A starts a method call, reads the value of the handle, but is interrupted
+//      before it can pass the handle over the FFI to Rust.
+//    * Thread B calls `destroy` and frees the underlying Rust struct.
+//    * Thread A resumes, passing the already-read handle value to Rust and triggering
+//      a use-after-free.
+//
+// One possible solution would be to use a `ReadWriteLock`, with each method call taking
+// a read lock (and thus allowed to run concurrently) and the special `destroy` method
+// taking a write lock (and thus blocking on live method calls). However, we aim not to
+// generate methods with any hidden blocking semantics, and a `destroy` method that might
+// block if called incorrectly seems to meet that bar.
+//
+// So, we achieve our goals by giving each instance an associated `AtomicLong` counter to track
+// the number of in-flight method calls, and an `AtomicBoolean` flag to indicate whether `destroy`
+// has been called. These are updated according to the following rules:
+//
+//    * The initial value of the counter is 1, indicating a live object with no in-flight calls.
+//      The initial value for the flag is false.
+//
+//    * At the start of each method call, we atomically check the counter.
+//      If it is 0 then the underlying Rust struct has already been destroyed and the call is aborted.
+//      If it is nonzero them we atomically increment it by 1 and proceed with the method call.
+//
+//    * At the end of each method call, we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+//    * When `destroy` is called, we atomically flip the flag from false to true.
+//      If the flag was already true we silently fail.
+//      Otherwise we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+// Astute readers may observe that this all sounds very similar to the way that Rust's `Arc<T>` works,
+// and indeed it is, with the addition of a flag to guard against multiple calls to `destroy`.
+//
+// The overall effect is that the underlying Rust struct is destroyed only when `destroy` has been
+// called *and* all in-flight method calls have completed, avoiding violating any of the expectations
+// of the underlying Rust code.
+//
+// This makes a cleaner a better alternative to _not_ calling `destroy()` as
+// and when the object is finished with, but the abstraction is not perfect: if the Rust object's `drop`
+// method is slow, and/or there are many objects to cleanup, and it's on a low end Android device, then the cleaner
+// thread may be starved, and the app will leak memory.
+//
+// In this case, `destroy`ing manually may be a better solution.
+//
+// The cleaner can live side by side with the manual calling of `destroy`. In the order of responsiveness, uniffi objects
+// with Rust peers are reclaimed:
+//
+// 1. By calling the `destroy` method of the object, which calls `rustObject.free()`. If that doesn't happen:
+// 2. When the object becomes unreachable, AND the Cleaner thread gets to call `rustObject.free()`. If the thread is starved then:
+// 3. The memory is reclaimed when the process terminates.
+//
+// [1] https://stackoverflow.com/questions/24376768/can-java-finalize-an-object-when-it-is-still-in-scope/24380219
+//
+
+
+/**
+ * Streaming download exposed as a UniFFI object. Callers pull chunks
+ * with `read_chunk` (sync; bridges to the underlying async read on the
+ * internal Tokio runtime). The Kotlin / Swift facade wrappers sit on
+ * top of this — see `downloadFlow` / `downloadStream`.
+ *
+ * Thread-safety: `read_chunk` is NOT safe to call concurrently from
+ * multiple threads on the same object — the foreign facade wrappers
+ * invoke it sequentially. `close` IS safe to call concurrently with
+ * `read_chunk`: it flips the state to Closed and drops the reader as
+ * soon as the in-flight read returns.
+ *
+ * Cancellation: if a `Drive9CancelToken` was supplied to
+ * `new_stream_download`, an in-flight `read_chunk` is woken via
+ * `tokio::select!` when the token flips, and surfaces as
+ * `Drive9Exception` with `code = "cancelled"`. Subsequent
+ * `read_chunk` calls replay the same error. If no token was
+ * supplied, only an explicit `close` will terminate the stream, and
+ * only after the current chunk read finishes naturally.
+ */
+public interface Drive9StreamDownloadInterface {
+    
+    /**
+     * Close the stream. Idempotent. If a `read_chunk` is currently
+     * in flight, the chunk read is allowed to finish (it will not be
+     * retried); to cancel mid-read use the `Drive9CancelToken`
+     * supplied to `new_stream_download`.
+     *
+     * Named `close_stream` rather than `close` because UniFFI also
+     * emits an `AutoCloseable.close()` on the generated Kotlin /
+     * Swift class for handle disposal; a Rust `close` method would
+     * override that and merge two semantically distinct
+     * responsibilities into one symbol.
+     */
+    fun `closeStream`()
+    
+    /**
+     * Pull the next chunk. Returns Some(bytes) for data, None on EOF.
+     * On error, the object transitions to terminal `Errored` and
+     * subsequent calls re-surface the same error.
+     */
+    fun `readChunk`(): kotlin.ByteArray?
+    
+    companion object
+}
+
+/**
+ * Streaming download exposed as a UniFFI object. Callers pull chunks
+ * with `read_chunk` (sync; bridges to the underlying async read on the
+ * internal Tokio runtime). The Kotlin / Swift facade wrappers sit on
+ * top of this — see `downloadFlow` / `downloadStream`.
+ *
+ * Thread-safety: `read_chunk` is NOT safe to call concurrently from
+ * multiple threads on the same object — the foreign facade wrappers
+ * invoke it sequentially. `close` IS safe to call concurrently with
+ * `read_chunk`: it flips the state to Closed and drops the reader as
+ * soon as the in-flight read returns.
+ *
+ * Cancellation: if a `Drive9CancelToken` was supplied to
+ * `new_stream_download`, an in-flight `read_chunk` is woken via
+ * `tokio::select!` when the token flips, and surfaces as
+ * `Drive9Exception` with `code = "cancelled"`. Subsequent
+ * `read_chunk` calls replay the same error. If no token was
+ * supplied, only an explicit `close` will terminate the stream, and
+ * only after the current chunk read finishes naturally.
+ */
+open class Drive9StreamDownload: Disposable, AutoCloseable, Drive9StreamDownloadInterface
+{
+
+    @Suppress("UNUSED_PARAMETER")
+    /**
+     * @suppress
+     */
+    constructor(withHandle: UniffiWithHandle, handle: Long) {
+        this.handle = handle
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(handle))
+    }
+
+    /**
+     * @suppress
+     *
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    constructor(noHandle: NoHandle) {
+        this.handle = 0
+        this.cleanable = null
+    }
+
+    protected val handle: Long
+    protected val cleanable: UniffiCleaner.Cleanable?
+
+    private val wasDestroyed = AtomicBoolean(false)
+    private val callCounter = AtomicLong(1)
+
+    override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    @Synchronized
+    override fun close() {
+        this.destroy()
+    }
+
+    internal inline fun <R> callWithHandle(block: (handle: Long) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.get()
+            if (c == 0L) {
+                throw IllegalStateException("${this.javaClass.simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this.javaClass.simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the handle being freed concurrently.
+        try {
+            return block(this.uniffiCloneHandle())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiCleanAction(private val handle: Long) : Runnable {
+        override fun run() {
+            if (handle == 0.toLong()) {
+                // Fake object created with `NoHandle`, don't try to free.
+                return;
+            }
+            uniffiRustCall { status ->
+                UniffiLib.uniffi_drive9_mobile_core_fn_free_drive9streamdownload(handle, status)
+            }
+        }
+    }
+
+    /**
+     * @suppress
+     */
+    fun uniffiCloneHandle(): Long {
+        if (handle == 0.toLong()) {
+            throw InternalException("uniffiCloneHandle() called on NoHandle object");
+        }
+        return uniffiRustCall() { status ->
+            UniffiLib.uniffi_drive9_mobile_core_fn_clone_drive9streamdownload(handle, status)
+        }
+    }
+
+    
+    /**
+     * Close the stream. Idempotent. If a `read_chunk` is currently
+     * in flight, the chunk read is allowed to finish (it will not be
+     * retried); to cancel mid-read use the `Drive9CancelToken`
+     * supplied to `new_stream_download`.
+     *
+     * Named `close_stream` rather than `close` because UniFFI also
+     * emits an `AutoCloseable.close()` on the generated Kotlin /
+     * Swift class for handle disposal; a Rust `close` method would
+     * override that and merge two semantically distinct
+     * responsibilities into one symbol.
+     */override fun `closeStream`()
+        = 
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_drive9_mobile_core_fn_method_drive9streamdownload_close_stream(
+        it,
+        _status)
+}
+    }
+    
+    
+
+    
+    /**
+     * Pull the next chunk. Returns Some(bytes) for data, None on EOF.
+     * On error, the object transitions to terminal `Errored` and
+     * subsequent calls re-surface the same error.
+     */
+    @Throws(Drive9Exception::class)override fun `readChunk`(): kotlin.ByteArray? {
+            return FfiConverterOptionalByteArray.lift(
+    callWithHandle {
+    uniffiRustCallWithError(Drive9Exception) { _status ->
+    UniffiLib.uniffi_drive9_mobile_core_fn_method_drive9streamdownload_read_chunk(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
+
+    
+
+
+    
+    
+    /**
+     * @suppress
+     */
+    companion object
+    
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeDrive9StreamDownload: FfiConverter<Drive9StreamDownload, Long> {
+    override fun lower(value: Drive9StreamDownload): Long {
+        return value.uniffiCloneHandle()
+    }
+
+    override fun lift(value: Long): Drive9StreamDownload {
+        return Drive9StreamDownload(UniffiWithHandle, value)
+    }
+
+    override fun read(buf: ByteBuffer): Drive9StreamDownload {
+        return lift(buf.getLong())
+    }
+
+    override fun allocationSize(value: Drive9StreamDownload) = 8UL
+
+    override fun write(value: Drive9StreamDownload, buf: ByteBuffer) {
         buf.putLong(lower(value))
     }
 }
@@ -3428,6 +3822,38 @@ public object FfiConverterOptionalDouble: FfiConverterRustBuffer<kotlin.Double?>
         } else {
             buf.put(1)
             FfiConverterDouble.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalByteArray: FfiConverterRustBuffer<kotlin.ByteArray?> {
+    override fun read(buf: ByteBuffer): kotlin.ByteArray? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterByteArray.read(buf)
+    }
+
+    override fun allocationSize(value: kotlin.ByteArray?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterByteArray.allocationSize(value)
+        }
+    }
+
+    override fun write(value: kotlin.ByteArray?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterByteArray.write(value, buf)
         }
     }
 }

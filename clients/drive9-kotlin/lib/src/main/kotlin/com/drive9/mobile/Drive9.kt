@@ -1,6 +1,8 @@
 package com.drive9.mobile
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withContext
 import uniffi.drive9_mobile_core.Drive9MobileClient as RawDrive9Client
 
@@ -75,6 +77,83 @@ public class Drive9Client(baseUrl: String, apiKey: String) {
      */
     public suspend fun sql(query: String): List<String> = withContext(Dispatchers.IO) {
         inner.sql(query)
+    }
+
+    /**
+     * Stream a remote file as a Kotlin [Flow] of [ByteArray] chunks.
+     *
+     * Backpressure is genuine: each chunk is `emit`ted, which suspends
+     * the producer coroutine until the downstream collector resumes.
+     * Cancellation of the collecting coroutine propagates as a
+     * `CancellationException` which the `finally` block uses to call
+     * `Drive9StreamDownload.close` — releasing the underlying socket
+     * once the in-flight read settles. For an immediate mid-read
+     * abort, also pass a [Drive9CancelToken] and call `cancel()` on
+     * it: the underlying `read_chunk` is interrupted via
+     * `tokio::select!`.
+     */
+    public fun downloadFlow(
+        remotePath: String,
+        cancel: Drive9CancelToken? = null,
+    ): Flow<ByteArray> = flow {
+        val reader = inner.newStreamDownload(remotePath, cancel)
+        try {
+            while (true) {
+                val chunk = withContext(Dispatchers.IO) { reader.readChunk() } ?: break
+                emit(chunk)
+            }
+        } finally {
+            // close() is idempotent; safe whether we exited via EOF,
+            // an exception, or coroutine cancellation.
+            reader.closeStream()
+        }
+    }
+
+    /**
+     * Stream a [Flow] of [ByteArray] chunks into a remote multipart
+     * upload. Each chunk becomes one server-side part (1-indexed in
+     * emission order); after the Flow completes, the upload is
+     * finalized with `complete(lastPartNum, empty)`. Callers are
+     * responsible for emitting chunks at the server-chosen part size
+     * — passing chunks of a different size will fail at write_part
+     * or complete time.
+     *
+     * Zero-chunk source: the upload is `abort()`ed and the call
+     * throws a Drive9Exception with `code = "other"`. If the source
+     * Flow throws or its coroutine is cancelled mid-stream, the
+     * upload is `abort()`ed before the exception propagates.
+     */
+    public suspend fun uploadFlow(
+        remotePath: String,
+        totalSize: Long,
+        chunks: Flow<ByteArray>,
+        expectedRevision: Long? = null,
+    ) {
+        val upload = inner.newStreamUpload(remotePath, totalSize, expectedRevision)
+        var partNum = 0
+        try {
+            chunks.collect { chunk ->
+                partNum++
+                val n = partNum
+                withContext(Dispatchers.IO) { upload.writePart(n, chunk) }
+            }
+            if (partNum == 0) {
+                withContext(Dispatchers.IO) { upload.abort() }
+                throw uniffi.drive9_mobile_core.Drive9Exception.Drive9(
+                    code = "other",
+                    statusCode = null,
+                    detail = "uploadFlow: source produced no chunks",
+                    serverRevision = null,
+                )
+            }
+            val final = partNum
+            withContext(Dispatchers.IO) { upload.complete(final, byteArrayOf()) }
+        } catch (e: Throwable) {
+            runCatching { withContext(Dispatchers.IO) { upload.abort() } }
+            throw e
+        } finally {
+            upload.close()
+        }
     }
 
     /**
@@ -176,6 +255,7 @@ public class Drive9Client(baseUrl: String, apiKey: String) {
 public typealias Drive9CancelToken = uniffi.drive9_mobile_core.Drive9CancelToken
 public typealias Drive9ProgressListener = uniffi.drive9_mobile_core.Drive9ProgressListener
 public typealias Drive9StreamUpload = uniffi.drive9_mobile_core.Drive9StreamUpload
+public typealias Drive9StreamDownload = uniffi.drive9_mobile_core.Drive9StreamDownload
 
 public data class Drive9FileInfo(
     val name: String,

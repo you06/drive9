@@ -93,6 +93,76 @@ public final class Drive9Client: @unchecked Sendable {
         }.value
     }
 
+    /// Stream a remote file as a custom pull-based AsyncSequence.
+    /// Each `next()` triggers exactly one `read_chunk` on the
+    /// underlying object, so the consumer's iteration speed throttles
+    /// the network read (real backpressure — no buffer policy that
+    /// could drop chunks).
+    ///
+    /// The iterator class also calls `close_stream` from `deinit` as a
+    /// safety net for early-`break` paths; for deterministic release
+    /// pass a `Drive9CancelToken` and call `cancel()` on it, which
+    /// interrupts an in-flight `read_chunk` via tokio::select!.
+    public func downloadStream(
+        remotePath: String,
+        cancel: Drive9CancelToken? = nil
+    ) async throws -> Drive9DownloadAsyncSequence {
+        let inner = self.inner
+        let reader = try await Task.detached(priority: .userInitiated) {
+            try inner.newStreamDownload(remotePath: remotePath, cancel: cancel)
+        }.value
+        return Drive9DownloadAsyncSequence(reader: reader)
+    }
+
+    /// Stream an `AsyncSequence` of `Data` chunks into a remote
+    /// multipart upload. Each emitted chunk becomes one server-side
+    /// part (1-indexed in emission order); after the source sequence
+    /// completes, the upload finalizes via
+    /// `complete(lastPartNum, empty)`. Zero-chunk source: abort + a
+    /// Drive9Exception with `code = "other"`. Source throws or task
+    /// cancellation mid-stream: abort before the error propagates.
+    public func uploadStream<Source: AsyncSequence>(
+        remotePath: String,
+        totalSize: Int64,
+        source: Source,
+        expectedRevision: Int64? = nil
+    ) async throws where Source.Element == Data {
+        let inner = self.inner
+        let upload = try await Task.detached(priority: .userInitiated) {
+            inner.newStreamUpload(
+                remotePath: remotePath,
+                totalSize: totalSize,
+                expectedRevision: expectedRevision
+            )
+        }.value
+        var partNum: Int32 = 0
+        do {
+            for try await chunk in source {
+                partNum += 1
+                let n = partNum
+                try await Task.detached(priority: .userInitiated) {
+                    try upload.writePart(partNum: n, data: chunk)
+                }.value
+            }
+            if partNum == 0 {
+                try? upload.abort()
+                throw Drive9Exception.Drive9(
+                    code: "other",
+                    statusCode: nil,
+                    detail: "uploadStream: source produced no chunks",
+                    serverRevision: nil
+                )
+            }
+            let final = partNum
+            try await Task.detached(priority: .userInitiated) {
+                try upload.complete(finalPartNum: final, finalData: Data())
+            }.value
+        } catch {
+            try? upload.abort()
+            throw error
+        }
+    }
+
     /// Open a streaming multipart upload. The returned
     /// ``Drive9StreamUpload`` receives parts incrementally. Phase 4A
     /// only exposes the object-based API; idiomatic
@@ -203,5 +273,56 @@ public final class Drive9Client: @unchecked Sendable {
                 expectedRevision: expectedRevision
             )
         }.value
+    }
+}
+
+/// Pull-based AsyncSequence wrapping a `Drive9StreamDownload`.
+///
+/// Each `next()` invokes exactly one `read_chunk` on the underlying
+/// object via `Task.detached` so the synchronous Rust read does not
+/// stall the Swift concurrency cooperative pool. Consumers iterate
+/// with `for try await chunk in stream`; on early `break` the
+/// iterator's `deinit` calls `close_stream` so the underlying socket
+/// is released — but ARC release timing is best-effort, so for
+/// deterministic mid-read abort the caller should pass a
+/// `Drive9CancelToken` to `Drive9Client.downloadStream` and call
+/// `cancel()` on it.
+public struct Drive9DownloadAsyncSequence: AsyncSequence, Sendable {
+    public typealias Element = Data
+    fileprivate let reader: Drive9StreamDownload
+
+    public final class AsyncIterator: AsyncIteratorProtocol, @unchecked Sendable {
+        private let reader: Drive9StreamDownload
+        private var done = false
+
+        fileprivate init(reader: Drive9StreamDownload) {
+            self.reader = reader
+        }
+
+        deinit {
+            // Safety net for early-break iteration paths. `close_stream`
+            // is idempotent, so it's fine if the consumer already
+            // explicitly closed.
+            reader.closeStream()
+        }
+
+        public func next() async throws -> Data? {
+            if done { return nil }
+            let r = self.reader
+            let chunk = try await Task.detached(priority: .userInitiated) {
+                try r.readChunk()
+            }.value
+            if chunk == nil {
+                done = true
+                // Explicit close on EOF — don't rely solely on deinit.
+                reader.closeStream()
+                return nil
+            }
+            return chunk
+        }
+    }
+
+    public func makeAsyncIterator() -> AsyncIterator {
+        AsyncIterator(reader: reader)
     }
 }

@@ -768,6 +768,15 @@ public protocol Drive9MobileClientProtocol: AnyObject, Sendable {
     func mkdir(path: String) throws 
     
     /**
+     * Open a streaming download. The returned
+     * [`Drive9StreamDownload`] yields chunks via `read_chunk` until
+     * EOF; the caller is responsible for calling `close` (or breaking
+     * iteration in the Kotlin/Swift facade wrappers, which call
+     * `close` for them).
+     */
+    func newStreamDownload(remotePath: String, cancel: Drive9CancelToken?) throws  -> Drive9StreamDownload
+    
+    /**
      * Open a streaming multipart upload. The returned
      * [`Drive9StreamUpload`] receives parts incrementally via
      * `write_part`, finalizes via `complete`, or aborts via `abort`.
@@ -1032,6 +1041,23 @@ open func mkdir(path: String)throws   {try rustCallWithError(FfiConverterTypeDri
         FfiConverterString.lower(path),$0
     )
 }
+}
+    
+    /**
+     * Open a streaming download. The returned
+     * [`Drive9StreamDownload`] yields chunks via `read_chunk` until
+     * EOF; the caller is responsible for calling `close` (or breaking
+     * iteration in the Kotlin/Swift facade wrappers, which call
+     * `close` for them).
+     */
+open func newStreamDownload(remotePath: String, cancel: Drive9CancelToken?)throws  -> Drive9StreamDownload  {
+    return try  FfiConverterTypeDrive9StreamDownload_lift(try rustCallWithError(FfiConverterTypeDrive9Exception_lift) {
+    uniffi_drive9_mobile_core_fn_method_drive9mobileclient_new_stream_download(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(remotePath),
+        FfiConverterOptionTypeDrive9CancelToken.lower(cancel),$0
+    )
+})
 }
     
     /**
@@ -1481,6 +1507,205 @@ public func FfiConverterTypeDrive9ProgressListener_lift(_ handle: UInt64) throws
 #endif
 public func FfiConverterTypeDrive9ProgressListener_lower(_ value: Drive9ProgressListener) -> UInt64 {
     return FfiConverterTypeDrive9ProgressListener.lower(value)
+}
+
+
+
+
+
+
+/**
+ * Streaming download exposed as a UniFFI object. Callers pull chunks
+ * with `read_chunk` (sync; bridges to the underlying async read on the
+ * internal Tokio runtime). The Kotlin / Swift facade wrappers sit on
+ * top of this — see `downloadFlow` / `downloadStream`.
+ *
+ * Thread-safety: `read_chunk` is NOT safe to call concurrently from
+ * multiple threads on the same object — the foreign facade wrappers
+ * invoke it sequentially. `close` IS safe to call concurrently with
+ * `read_chunk`: it flips the state to Closed and drops the reader as
+ * soon as the in-flight read returns.
+ *
+ * Cancellation: if a `Drive9CancelToken` was supplied to
+ * `new_stream_download`, an in-flight `read_chunk` is woken via
+ * `tokio::select!` when the token flips, and surfaces as
+ * `Drive9Exception` with `code = "cancelled"`. Subsequent
+ * `read_chunk` calls replay the same error. If no token was
+ * supplied, only an explicit `close` will terminate the stream, and
+ * only after the current chunk read finishes naturally.
+ */
+public protocol Drive9StreamDownloadProtocol: AnyObject, Sendable {
+    
+    /**
+     * Close the stream. Idempotent. If a `read_chunk` is currently
+     * in flight, the chunk read is allowed to finish (it will not be
+     * retried); to cancel mid-read use the `Drive9CancelToken`
+     * supplied to `new_stream_download`.
+     *
+     * Named `close_stream` rather than `close` because UniFFI also
+     * emits an `AutoCloseable.close()` on the generated Kotlin /
+     * Swift class for handle disposal; a Rust `close` method would
+     * override that and merge two semantically distinct
+     * responsibilities into one symbol.
+     */
+    func closeStream() 
+    
+    /**
+     * Pull the next chunk. Returns Some(bytes) for data, None on EOF.
+     * On error, the object transitions to terminal `Errored` and
+     * subsequent calls re-surface the same error.
+     */
+    func readChunk() throws  -> Data?
+    
+}
+/**
+ * Streaming download exposed as a UniFFI object. Callers pull chunks
+ * with `read_chunk` (sync; bridges to the underlying async read on the
+ * internal Tokio runtime). The Kotlin / Swift facade wrappers sit on
+ * top of this — see `downloadFlow` / `downloadStream`.
+ *
+ * Thread-safety: `read_chunk` is NOT safe to call concurrently from
+ * multiple threads on the same object — the foreign facade wrappers
+ * invoke it sequentially. `close` IS safe to call concurrently with
+ * `read_chunk`: it flips the state to Closed and drops the reader as
+ * soon as the in-flight read returns.
+ *
+ * Cancellation: if a `Drive9CancelToken` was supplied to
+ * `new_stream_download`, an in-flight `read_chunk` is woken via
+ * `tokio::select!` when the token flips, and surfaces as
+ * `Drive9Exception` with `code = "cancelled"`. Subsequent
+ * `read_chunk` calls replay the same error. If no token was
+ * supplied, only an explicit `close` will terminate the stream, and
+ * only after the current chunk read finishes naturally.
+ */
+open class Drive9StreamDownload: Drive9StreamDownloadProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_drive9_mobile_core_fn_clone_drive9streamdownload(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_drive9_mobile_core_fn_free_drive9streamdownload(handle, $0) }
+    }
+
+    
+
+    
+    /**
+     * Close the stream. Idempotent. If a `read_chunk` is currently
+     * in flight, the chunk read is allowed to finish (it will not be
+     * retried); to cancel mid-read use the `Drive9CancelToken`
+     * supplied to `new_stream_download`.
+     *
+     * Named `close_stream` rather than `close` because UniFFI also
+     * emits an `AutoCloseable.close()` on the generated Kotlin /
+     * Swift class for handle disposal; a Rust `close` method would
+     * override that and merge two semantically distinct
+     * responsibilities into one symbol.
+     */
+open func closeStream()  {try! rustCall() {
+    uniffi_drive9_mobile_core_fn_method_drive9streamdownload_close_stream(
+            self.uniffiCloneHandle(),$0
+    )
+}
+}
+    
+    /**
+     * Pull the next chunk. Returns Some(bytes) for data, None on EOF.
+     * On error, the object transitions to terminal `Errored` and
+     * subsequent calls re-surface the same error.
+     */
+open func readChunk()throws  -> Data?  {
+    return try  FfiConverterOptionData.lift(try rustCallWithError(FfiConverterTypeDrive9Exception_lift) {
+    uniffi_drive9_mobile_core_fn_method_drive9streamdownload_read_chunk(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDrive9StreamDownload: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = Drive9StreamDownload
+
+    public static func lift(_ handle: UInt64) throws -> Drive9StreamDownload {
+        return Drive9StreamDownload(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: Drive9StreamDownload) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Drive9StreamDownload {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: Drive9StreamDownload, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDrive9StreamDownload_lift(_ handle: UInt64) throws -> Drive9StreamDownload {
+    return try FfiConverterTypeDrive9StreamDownload.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDrive9StreamDownload_lower(_ value: Drive9StreamDownload) -> UInt64 {
+    return FfiConverterTypeDrive9StreamDownload.lower(value)
 }
 
 
@@ -2082,6 +2307,30 @@ fileprivate struct FfiConverterOptionDouble: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionData: FfiConverterRustBuffer {
+    typealias SwiftType = Data?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterData.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterData.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeDrive9CancelToken: FfiConverterRustBuffer {
     typealias SwiftType = Drive9CancelToken?
 
@@ -2295,6 +2544,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_mkdir() != 42794) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_new_stream_download() != 57958) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_drive9_mobile_core_checksum_method_drive9mobileclient_new_stream_upload() != 36337) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -2326,6 +2578,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_drive9_mobile_core_checksum_method_drive9progresslistener_on_progress() != 21944) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_drive9_mobile_core_checksum_method_drive9streamdownload_close_stream() != 22550) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_drive9_mobile_core_checksum_method_drive9streamdownload_read_chunk() != 48316) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_drive9_mobile_core_checksum_method_drive9streamupload_abort() != 24234) {

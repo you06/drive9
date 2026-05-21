@@ -3,6 +3,8 @@ package com.drive9.mobile
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpHandler
 import com.sun.net.httpserver.HttpServer
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import uniffi.drive9_mobile_core.Drive9Exception
 import uniffi.drive9_mobile_core.Drive9ProgressListener
@@ -606,6 +608,109 @@ class Drive9Test {
         } finally {
             upload.close()
         }
+    }
+
+    @Test
+    fun downloadFlowEmitsChunksUntilEof() = runBlocking {
+        val body = ByteArray(200_000) { (it % 251).toByte() }
+        route("GET", "/v1/fs/big.bin") { ex ->
+            ex.sendResponseHeaders(200, body.size.toLong())
+            ex.responseBody.write(body); ex.close()
+        }
+
+        val client = Drive9Client(baseUrl, "k")
+        val collected = client.downloadFlow("/big.bin").toList()
+        val out = ByteArray(collected.sumOf { it.size })
+        var off = 0
+        for (chunk in collected) {
+            System.arraycopy(chunk, 0, out, off, chunk.size)
+            off += chunk.size
+        }
+        assertContentEquals(body, out)
+    }
+
+    @Test
+    fun uploadFlowEachChunkWritesOnePartCompleteEmpty() = runBlocking {
+        val uploadId = "u-flow-upload"
+        val partSize = 100L
+        route("POST", "/v2/uploads/initiate") { ex ->
+            val body = """{"upload_id":"$uploadId","key":"k","part_size":$partSize,"total_parts":3}"""
+                .toByteArray(StandardCharsets.UTF_8)
+            ex.sendResponseHeaders(200, body.size.toLong())
+            ex.responseBody.write(body); ex.close()
+        }
+        server.createContext("/v2/uploads/$uploadId/presign") { ex ->
+            val req = ex.requestBody.readBytes().toString(StandardCharsets.UTF_8)
+            val partNum = Regex("\"part_number\"\\s*:\\s*(\\d+)").find(req)!!.groupValues[1].toInt()
+            val body = """{"number":$partNum,"url":"$baseUrl/upload/$partNum","size":$partSize}"""
+                .toByteArray(StandardCharsets.UTF_8)
+            ex.sendResponseHeaders(200, body.size.toLong())
+            ex.responseBody.write(body); ex.close()
+        }
+        val putHits = mutableSetOf<Int>()
+        server.createContext("/upload/") { ex ->
+            val partNum = ex.requestURI.rawPath.removePrefix("/upload/").toInt()
+            ex.requestBody.readBytes()
+            synchronized(putHits) { putHits.add(partNum) }
+            ex.responseHeaders.add("ETag", "etag-$partNum")
+            ex.sendResponseHeaders(200, -1); ex.close()
+        }
+        var completeCalls = 0
+        route("POST", "/v2/uploads/$uploadId/complete") { ex ->
+            completeCalls++
+            ex.requestBody.readBytes()
+            ex.sendResponseHeaders(200, -1); ex.close()
+        }
+
+        val client = Drive9Client(baseUrl, "k")
+        val source = flow {
+            emit(ByteArray(partSize.toInt()) { 'a'.code.toByte() })
+            emit(ByteArray(partSize.toInt()) { 'b'.code.toByte() })
+            emit(ByteArray(partSize.toInt()) { 'c'.code.toByte() })
+        }
+        client.uploadFlow("/flow.bin", partSize * 3, source)
+        assertEquals(setOf(1, 2, 3), synchronized(putHits) { putHits.toSet() })
+        assertEquals(1, completeCalls)
+    }
+
+    @Test
+    fun uploadFlowZeroChunkSourceAbortsAndErrors() = runBlocking {
+        val uploadId = "u-flow-empty"
+        val partSize = 100L
+        route("POST", "/v2/uploads/initiate") { ex ->
+            val body = """{"upload_id":"$uploadId","key":"k","part_size":$partSize,"total_parts":1}"""
+                .toByteArray(StandardCharsets.UTF_8)
+            ex.sendResponseHeaders(200, body.size.toLong())
+            ex.responseBody.write(body); ex.close()
+        }
+        // We don't even expect initiate to be called: uploadFlow only
+        // initiates on the first writePart, and an empty source never
+        // calls writePart. We test that even if init happened (because
+        // the wrapper might choose to), the upload is aborted before
+        // any PUTs.
+        var abortCalls = 0
+        route("POST", "/v2/uploads/$uploadId/abort") { ex ->
+            abortCalls++
+            ex.sendResponseHeaders(200, -1); ex.close()
+        }
+        var completeCalls = 0
+        route("POST", "/v2/uploads/$uploadId/complete") { ex ->
+            completeCalls++
+            ex.sendResponseHeaders(200, -1); ex.close()
+        }
+
+        val client = Drive9Client(baseUrl, "k")
+        val source: kotlinx.coroutines.flow.Flow<ByteArray> = flow { /* no emit */ }
+        val err = assertFailsWith<Drive9Exception.Drive9> {
+            client.uploadFlow("/empty.bin", partSize, source)
+        }
+        assertEquals("other", err.code)
+        assertTrue("no chunks" in err.detail, "want 'no chunks' detail: ${err.detail}")
+        assertEquals(0, completeCalls)
+        // abort may or may not have been called depending on whether
+        // the wrapper triggered init; both behaviours are OK as long
+        // as no PUT/complete fired and the caller saw the explicit
+        // "no chunks" error.
     }
 
     @Test

@@ -16,7 +16,15 @@ cargo build --release
 # Kotlin bindings (regenerate in place; the .so under resources is loaded by
 # JNA when the JVM module starts).
 rm -f "$KOTLIN_OUT/uniffi/drive9_mobile_core/drive9_mobile_core.kt"
+# Pass --no-format to uniffi-bindgen: without it, uniffi-bindgen
+# shells out to ktlint (Kotlin) / swift-format (Swift) on the
+# generated file. On this host swift-format hangs on the large
+# generated Swift file and pegs a CPU core for hours; passing
+# --no-format skips that step entirely. The generated code already
+# compiles cleanly and the cosmetic formatting doesn't matter
+# because the file is regenerated, not edited by hand.
 cargo run --release --bin uniffi-bindgen -- generate \
+    --no-format \
     --library target/release/libdrive9_mobile_core.so \
     --language kotlin \
     --out-dir "$KOTLIN_OUT"
@@ -31,6 +39,7 @@ rm -f "$SWIFT_OUT_API/Drive9MobileGenerated.swift"
 TMP_SWIFT="$(mktemp -d)"
 trap 'rm -rf "$TMP_SWIFT"' EXIT
 cargo run --release --bin uniffi-bindgen -- generate \
+    --no-format \
     --library target/release/libdrive9_mobile_core.so \
     --language swift \
     --out-dir "$TMP_SWIFT"
